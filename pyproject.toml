@@ -5,12 +5,6 @@ description = "Extract treatment sheets and invoice services from Nine Lives PDF
 requires-python = ">=3.12"
 dependencies = ["pdfplumber>=0.11,<1"]
 
-[project.scripts]
-invoice-extract = "treatment_sheet_parser.nlf.cli:main"
-needs-invoice = "treatment_sheet_parser.needs_invoice.cli:main"
-generate-cat-mapping-prompt = "treatment_sheet_parser.cat_mapping.prompt:main"
-prepare = "treatment_sheet_parser.prepare:main"
-
 [dependency-groups]
 dev = [
     "pytest>=8,<9",
@@ -22,11 +16,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/treatment_sheet_parser"]
+only-include = ["src_v2"]
+sources = ["src_v2"]
 
 [tool.pytest.ini_options]
 cache_dir = ".pytest_cache"
-testpaths = ["tests"]
+pythonpath = ["src_v2"]
+testpaths = ["tests_v2"]
 
 [tool.uv]
 cache-dir = ".uv-cache"

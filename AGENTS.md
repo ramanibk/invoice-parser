@@ -3,11 +3,14 @@
 - Keep this package robust and deliberately small. Prefer explicit validation and small,
   single-purpose functions over abstractions or cleverness.
 - Keep all functions within the configured Ruff McCabe complexity limit of 5.
-- For every new source file, add a concise module docstring that explains its purpose. Add clear,
-  focused docstrings to functions and classes where their behavior, inputs, outputs, side effects,
-  or failure modes are not immediately obvious. Use straightforward comments to explain important
-  reasoning, constraints, and invariants; add inline comments only where they improve understanding.
-  Keep all documentation accurate and informative without restating the code or becoming verbose.
+- Every Python source and test module must have a concise module docstring that explains its
+  purpose. Every class and every function or method declared with `def` or `async def`, including
+  private helpers, nested functions, fixtures, and tests, must have a clear, focused docstring.
+  Use a one-line docstring when the contract is simple; document behavior, inputs, outputs, side
+  effects, and failure modes when they are not obvious. This rule applies to existing and future
+  code. Use straightforward comments to explain important reasoning, constraints, and invariants;
+  add inline comments only where they improve understanding. Keep all documentation accurate and
+  informative without restating the code or becoming verbose.
 - Every AI instruction prompt must require the AI to read and follow `src/prompts/invariants.md`.
   A prompt may add stricter requirements, but it must not weaken an invariant.
 - Add focused tests for success, malformed inputs, and identity mismatches.
