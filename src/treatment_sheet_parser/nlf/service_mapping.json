@@ -1,0 +1,69 @@
+{
+  "format_version": "1.0",
+  "services": {
+    "Spay / Neuter": {
+      "airtable_field": "Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Cat Neuter",
+        "Cat Spay"
+      ]
+    },
+    "Microchip": {
+      "airtable_field": "Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Microchip insertion (client provided chip)"
+      ]
+    },
+    "FVRCP": {
+      "airtable_field": "Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "FVRCP vaccine - 1 year"
+      ]
+    },
+    "Rabies": {
+      "airtable_field": "Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Rabies 1 year vaccine [0]"
+      ]
+    },
+    "Pregnant": {
+      "airtable_field": "Additional Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Pregnant Surcharge w/LRS Administered"
+      ]
+    },
+    "In Heat": {
+      "airtable_field": "Additional Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "In heat"
+      ]
+    },
+    "Euthanasia": {
+      "airtable_field": "Additional Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Euthanasia"
+      ]
+    },
+    "SubQ Fluids": {
+      "airtable_field": "Additional Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "SQ Fluids w/ surgery"
+      ]
+    },
+    "Intubation": {
+      "airtable_field": "Additional Services",
+      "airtable_option_exists": true,
+      "invoice_values": [
+        "Intubation (cat)"
+      ]
+    }
+  }
+}
