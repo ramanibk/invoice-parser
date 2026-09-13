@@ -3,12 +3,17 @@
 import re
 from dataclasses import dataclass, field, fields
 from datetime import date as Date
-from datetime import datetime as DateTime
 from pathlib import PurePath
 
 from errors import PipelineError
 from global_constants import LOCATION_CODE, RUN_YEAR
-from run_identity import MONTH_ABBREVIATIONS
+from models_validation import (
+    _require_date,
+    _require_non_empty_tuple_of,
+    _require_string,
+    _require_text,
+)
+from resolve_run_identity import MONTH_ABBREVIATIONS
 
 GENDERS = frozenset({"Female", "Male", "Unknown"})
 CAT_ID_PATTERN = re.compile(
@@ -70,7 +75,7 @@ class TreatmentSheetAppointment:
 
     def __post_init__(self) -> None:
         """Validate the appointment date, characteristics, and medical findings."""
-        _validate_date(self.service_date)
+        _require_date(self.service_date, "appointment service date")
         _validate_gender(self.gender)
         _validate_microchip(self.microchip_number)
         _validate_optional_text(self.color, "appointment color")
@@ -98,31 +103,12 @@ class CatRecord:
         _validate_appointments(self.appointments)
 
 
-def _require_string(value: object, field_name: str) -> None:
-    """Require a value to be a string without changing its exact contents."""
-    if not isinstance(value, str):
-        raise PipelineError(f"{field_name} must be a string")
-
-
-def _require_text(value: object, field_name: str) -> None:
-    """Require a string containing at least one non-whitespace character."""
-    _require_string(value, field_name)
-    if not value.strip():
-        raise PipelineError(f"{field_name} must be non-empty")
-
-
 def _validate_pdf_filename(value: object) -> None:
     """Require a bare PDF filename that cannot redirect input reads."""
     _require_text(value, "manifest filename")
     path = PurePath(value)
     if path.is_absolute() or len(path.parts) != 1 or path.suffix.casefold() != ".pdf":
         raise PipelineError("manifest filename must be a bare PDF filename")
-
-
-def _validate_date(value: object) -> None:
-    """Require a calendar date without accepting a datetime subclass."""
-    if not isinstance(value, Date) or isinstance(value, DateTime):
-        raise PipelineError("appointment service date must be a date")
 
 
 def _validate_gender(value: object) -> None:
@@ -162,10 +148,7 @@ def _validate_cat_id(value: object) -> None:
 
 def _validate_appointments(value: object) -> None:
     """Require a non-empty tuple of appointments with unique service dates."""
-    if not isinstance(value, tuple) or not value:
-        raise PipelineError("cat appointments must be a non-empty tuple")
-    if not all(isinstance(item, TreatmentSheetAppointment) for item in value):
-        raise PipelineError("cat appointments must contain treatment-sheet appointments")
-    dates = [item.service_date for item in value]
+    appointments = _require_non_empty_tuple_of(value, TreatmentSheetAppointment, "cat appointments")
+    dates = [item.service_date for item in appointments]
     if len(dates) != len(set(dates)):
         raise PipelineError("cat appointments must have unique service dates")

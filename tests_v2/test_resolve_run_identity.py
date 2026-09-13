@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 from errors import PipelineError
-from run_identity import make_cat_id, make_run_id, resolve_run_date
+from resolve_run_identity import make_cat_id, make_run_id, resolve_run_date
 
 
 def test_resolves_short_date_in_configured_year() -> None:

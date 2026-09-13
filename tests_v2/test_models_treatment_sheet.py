@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 from errors import PipelineError
-from treatment_sheet_models import (
+from models_treatment_sheet import (
     CatRecord,
     ManifestEntry,
     MedicalFindings,
