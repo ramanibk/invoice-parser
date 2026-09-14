@@ -5,6 +5,9 @@ description = "Extract treatment sheets and invoice services from Nine Lives PDF
 requires-python = ">=3.12"
 dependencies = ["pdfplumber>=0.11,<1"]
 
+[project.scripts]
+invoice-pipeline = "invoice_pipeline:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8,<9",

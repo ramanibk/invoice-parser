@@ -42,6 +42,21 @@ def test_starts_log_without_creating_future_run_directory(tmp_path: Path) -> Non
     assert not plan.run_directory.exists()
 
 
+def test_redacts_sensitive_values_before_writing_log(tmp_path: Path) -> None:
+    """Prevent a supplied Airtable token from reaching persistent storage."""
+    plan = plan_output_paths(tmp_path / "outputs", date(2026, 9, 3), started_at=STARTED_AT)
+
+    start_pipeline_log(
+        plan,
+        ("Unexpected detail contained patSensitiveToken123.",),
+        sensitive_values=("patSensitiveToken123",),
+    )
+
+    log_text = plan.log_path.read_text(encoding="utf-8")
+    assert log_text == "Unexpected detail contained [REDACTED].\n"
+    assert "patSensitiveToken123" not in log_text
+
+
 def test_numbers_colliding_log_without_changing_extension(tmp_path: Path) -> None:
     """Preserve both persistent logs when two starts share one timestamp."""
     output_dir = tmp_path / "outputs"

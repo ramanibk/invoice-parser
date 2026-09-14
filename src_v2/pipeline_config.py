@@ -8,18 +8,17 @@ from datetime import date as Date
 from pathlib import Path
 
 from errors import PipelineError
-from global_constants import RUN_YEAR
+from global_constants import (
+    AIRTABLE_ENV_VARS,
+    OUTPUT_DIRECTORY_NAME,
+    RUN_YEAR,
+    SERVICE_CATALOG_FILENAME,
+)
 from models_validation import _require_date, _require_text
 
-AIRTABLE_ENV_VARS = {
-    "token": "AIRTABLE_TOKEN",
-    "base_id": "AIRTABLE_BASE_ID",
-    "appointments_table_id": "AIRTABLE_APPOINTMENTS_TABLE_ID",
-    "cats_table_id": "AIRTABLE_CATS_TABLE_ID",
-}
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT_DIR = PROJECT_DIR.parent / "bac-outputs"
-DEFAULT_SERVICE_CATALOG_PATH = Path(__file__).with_name("service_catalog.json")
+DEFAULT_OUTPUT_DIR = PROJECT_DIR.parent / OUTPUT_DIRECTORY_NAME
+DEFAULT_SERVICE_CATALOG_PATH = Path(__file__).with_name(SERVICE_CATALOG_FILENAME)
 
 
 @dataclass(frozen=True)

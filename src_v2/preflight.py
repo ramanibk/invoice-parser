@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from errors import PipelineError
+from global_constants import MANIFEST_FILENAME
 from models_treatment_sheet import ManifestEntry
 from models_validation import _require_date, _require_non_empty_tuple_of
 from pipeline_config import PipelineConfig
@@ -18,7 +19,6 @@ from pipeline_logging import OutputPlan, plan_output_paths, start_pipeline_log
 from resolve_run_identity import make_run_id
 from service_catalog import ServiceCatalog, load_service_catalog
 
-MANIFEST_FILENAME = "manifest.json"
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
 MANIFEST_ENTRY_KEYS = frozenset({"owner", "catName", "fileName"})
 
@@ -104,7 +104,18 @@ def run_preflight(
     service_catalog = load_service_catalog(config.inputs.service_catalog_path)
     validate_runtime_readiness(config)
     output_plan = plan_output_paths(config.output_dir, config.run_date, started_at=started_at)
-    start_pipeline_log(output_plan, _preflight_log_messages(manifest, service_catalog))
+    messages = _preflight_log_messages(
+        config,
+        input_files,
+        manifest,
+        service_catalog,
+        output_plan,
+    )
+    start_pipeline_log(
+        output_plan,
+        messages,
+        sensitive_values=(config.airtable.token,),
+    )
     return PreflightResult(config, input_files, manifest, service_catalog, output_plan)
 
 
@@ -175,14 +186,23 @@ def _require_preflight_types(result: PreflightResult) -> None:
 
 
 def _preflight_log_messages(
+    config: PipelineConfig,
+    input_files: RunInputFiles,
     manifest: RunManifest,
     service_catalog: ServiceCatalog,
+    output_plan: OutputPlan,
 ) -> tuple[str, ...]:
     """Build privacy-conscious log entries for an accepted preflight."""
+    review_mode = "enabled" if config.review_enabled else "disabled"
     return (
         f"Preflight passed for {manifest.run_date.isoformat()}.",
+        f"Input directory: {config.inputs.input_dir}",
+        f"Invoice: {input_files.invoice_path.name}",
         f"Validated {len(manifest.entries)} treatment sheet(s).",
         f"Validated {len(service_catalog.services)} service catalog entries.",
+        "Validated Airtable configuration without a network request.",
+        f"Review: {review_mode}.",
+        f"Future run directory: {output_plan.run_directory}",
     )
 
 

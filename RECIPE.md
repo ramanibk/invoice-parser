@@ -1,22 +1,22 @@
-# NLF preparation recipe
+# Invoice pipeline recipe
 
-This recipe runs the complete read-only Airtable query, treatment-sheet and invoice extraction,
-and cat-mapping preparation workflow.
+This is the living runbook for the rewritten invoice pipeline. The `invoice-pipeline` command
+currently performs preflight only: it validates all source identities and runtime prerequisites,
+plans the future output location, and starts a persistent log. It does not yet parse PDF contents,
+query Airtable, create a run directory, or publish extraction artifacts.
 
 ## 1. Install the project
 
 Run these commands from the `invoice-parser/` repository:
 
 ```bash
-cd /path/to/Documents/Projects/invoice-parser
-git pull
 uv sync
 ```
 
 ## 2. Configure Airtable
 
-Create an ignored `.env` file with the Airtable credentials and identifiers. The personal access
-token needs `data.records:read` access to the configured base.
+Create an ignored `.env` file with the Airtable credentials and identifiers. Preflight validates
+their presence and syntax but makes no network request.
 
 ```bash
 AIRTABLE_TOKEN="your-token"
@@ -31,11 +31,10 @@ Load these values into the current shell:
 source .env
 ```
 
-## 3. Prepare the input directory
+## 3. Prepare read-only inputs
 
-Create the run input directory under the sibling `bac-invoices` project. Place `manifest.json`, all
-treatment-sheet PDFs referenced by the manifest, and exactly one PDF whose filename contains
-`invoice` (case-insensitive) in that directory:
+Place `manifest.json`, all treatment-sheet PDFs referenced by it, and exactly one PDF whose filename
+contains `invoice` (case-insensitive) in one directory. Treat all of these files as read-only.
 
 ```text
 ../bac-invoices/run-inputs/
@@ -66,48 +65,64 @@ the same input directory.
 }
 ```
 
-## 4. Run preparation
+## 4. Run preflight
 
-Replace the example date and input path with the values for the run:
-
-```bash
-uv run prepare --date 2026-09-03 ../bac-invoices/run-inputs
-```
-
-The command queries Airtable, validates and extracts the PDFs, and writes paired artifacts to a
-new run directory such as:
-
-```text
-../bac-outputs/26SEP03-NLF/
-├── extraction.json
-└── needs_invoice.json
-```
-
-When extraction sees an unfamiliar invoice service, it may interactively ask for a mapping. A
-confirmed mapping updates the configured service-mapping JSON file.
-
-## 5. Run the mapping prompt
-
-The preparation command prints a cat-mapping prompt. Paste that prompt into Codex to create these
-files in the same run directory:
-
-```text
-cat_mapping.json
-cat_match_review.json
-```
-
-## 6. Resolve uncertain matches
-
-If the review contains unresolved matches, fill the empty `resolution` fields in
-`cat_match_review.json`, then generate a resolution prompt:
+Pass the configured-year date in `MM/DD` form and the input directory:
 
 ```bash
-uv run generate-cat-mapping-prompt --resolve 2026-09-03 NLF
+uv run invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
 ```
 
-Paste that prompt into Codex to apply and validate the decisions.
+Interactive review is the default. At this stage it checks that terminal input and the macOS PDF
+viewer are available; the numbered extraction stages will use that support to open PDFs later. For
+automation or preflight-only testing, disable review readiness explicitly:
 
-## 7. Verify repository changes
+```bash
+uv run invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
+```
+
+Successful output includes the validated input counts, planned future run directory, and persistent
+log path. The log is created under `../bac-outputs/logs/`; the planned run directory is not created.
+
+Use overrides when testing outside the normal project layout:
+
+```bash
+uv run invoice-pipeline \
+  --date 09/03 \
+  --no-review \
+  --outputs-dir /tmp/invoice-pipeline-outputs \
+  /absolute/path/to/run-inputs
+```
+
+The command always uses the bundled service catalog and reads all Airtable settings from the
+environment. It does not accept secrets or schema IDs as command-line arguments, preventing the
+token from remaining in shell history or process listings. Persistent logging also redacts the
+configured token before writing any message.
+
+Example successful result:
+
+```text
+Invoice pipeline
+Run date: 2026-09-03
+Input directory: /absolute/path/to/run-inputs
+Review: disabled
+
+Preflight
+[ok] Manifest validated
+[ok] Invoice found: clinic-invoice.pdf
+[ok] 2 treatment sheet(s) validated
+[ok] 67 service catalog entries validated
+[ok] Airtable configuration validated (no network request made)
+[ok] Output location ready
+
+Planned run directory: /path/to/bac-outputs/26SEP03-NLF
+Log: /path/to/bac-outputs/logs/TIMESTAMP-26SEP03-NLF.log
+
+Preflight complete.
+No extraction stages are implemented yet; no run directory was created.
+```
+
+## 5. Verify repository changes
 
 Run the project checks after changing code or a service mapping:
 
