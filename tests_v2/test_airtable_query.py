@@ -6,7 +6,12 @@ from datetime import date, datetime
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from airtable_query import APPOINTMENT_FIELDS, appointment_scope_formula, query_appointments
+from airtable_query import (
+    APPOINTMENT_FIELDS,
+    appointment_scope_formula,
+    query_appointments,
+    query_records_by_ids,
+)
 from errors import PipelineError
 from pipeline_config import AirtableConfig
 
@@ -62,7 +67,10 @@ def test_query_sends_exact_date_location_fields_and_bearer_token() -> None:
     assert parameters["fields[]"] == list(APPOINTMENT_FIELDS)
     assert parameters["pageSize"] == ["100"]
     assert parameters["filterByFormula"] == [
-        "AND(IS_SAME({Date},DATETIME_PARSE('2026-09-03'),'day'),{Location}='Nine Lives Foundation')"
+        "AND(IS_SAME({Date},DATETIME_PARSE('2026-09-03'),'day'),"
+        "{Location}='Nine Lives Foundation',"
+        "OR({Status}='Completed',{Status}='Scheduled',{Status}='Needs Scheduling'),"
+        "OR({Status}!='Completed',{Cost}=BLANK(),{Filled}=BLANK(),{Invoice}=BLANK()))"
     ]
 
 
@@ -149,4 +157,42 @@ def test_query_rejects_repeated_pagination_offset() -> None:
             _config(),
             date(2026, 9, 3),
             transport=lambda _request: _response(page),
+        )
+
+
+def test_query_records_by_ids_requests_displayed_values() -> None:
+    """Fetch exact identities using Airtable's required displayed-string settings."""
+    requests = []
+
+    def transport(request):
+        """Capture the exact-record request and return its requested record."""
+        requests.append(request)
+        return _response({"records": [{"id": "recCat1", "fields": {"Voucher": "V-1"}}]})
+
+    records = query_records_by_ids(
+        _config(),
+        "tblCats1",
+        ("recCat1",),
+        ("Voucher",),
+        cell_format="string",
+        transport=transport,
+    )
+
+    parameters = parse_qs(urlparse(requests[0].full_url).query)
+    assert records[0]["id"] == "recCat1"
+    assert parameters["filterByFormula"] == ["RECORD_ID()='recCat1'"]
+    assert parameters["cellFormat"] == ["string"]
+    assert parameters["userLocale"] == ["en-us"]
+    assert parameters["timeZone"] == ["America/Los_Angeles"]
+
+
+def test_query_records_by_ids_rejects_missing_identity() -> None:
+    """Reject a response that omits an explicitly requested linked record."""
+    with pytest.raises(PipelineError, match="does not match requested record identities"):
+        query_records_by_ids(
+            _config(),
+            "tblCats1",
+            ("recCat1",),
+            ("Cat Name",),
+            transport=lambda _request: _response({"records": []}),
         )

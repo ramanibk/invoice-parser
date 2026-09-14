@@ -5,10 +5,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from airtable_snapshot import query_airtable_snapshot
+from cat_matching import run_codex_cat_matching
 from errors import PipelineError
-from extraction_output import publish_extraction
 from invoice_extraction import parse_invoice
 from invoice_treatment_mapping import match_invoice_to_treatment_sheets
+from models_airtable import AirtableSnapshot
 from models_extraction import ExtractionCat
 from models_invoice import Invoice
 from models_treatment_sheet import TreatmentCat
@@ -18,6 +20,7 @@ from preflight import PreflightResult, run_preflight
 from resolve_run_identity import resolve_run_date
 from review import review_extraction
 from review_output import print_invoice_extraction, print_treatment_sheet_extraction
+from run_artifacts import publish_run_snapshots
 from treatment_sheet_extraction import extract_treatment_sheets
 
 
@@ -36,8 +39,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         treatment_cats = _run_treatment_sheet_extraction(preflight)
         _print_treatment_sheet_result(treatment_cats, config.review_enabled)
         extraction_cats = _run_invoice_treatment_mapping(preflight, invoice, treatment_cats)
-        extraction_path = _publish_extraction(preflight, extraction_cats, invoice)
-        _print_mapping_result(extraction_cats, extraction_path)
+        _print_mapping_result(extraction_cats)
+        airtable_snapshot = _run_airtable_retrieval(preflight)
+        # The run becomes resumable only when both authoritative inputs are
+        # complete, so publication waits for the Airtable query and normalization.
+        extraction_path, needs_invoice_path = _publish_snapshots(
+            preflight, extraction_cats, invoice, airtable_snapshot
+        )
+        _print_airtable_result(
+            airtable_snapshot.linked_cat_count, extraction_path, needs_invoice_path
+        )
+        mapping_path, review_path, review_count = _run_cat_matching(preflight)
+        _print_cat_matching_result(mapping_path, review_path, review_count)
     except PipelineError as exc:
         print(f"invoice-pipeline: error: {exc}", file=sys.stderr)
         return 1
@@ -72,6 +85,7 @@ def _print_preflight_result(result: PreflightResult) -> None:
     print(f"[ok] {len(result.manifest.entries)} treatment sheet(s) validated")
     print(f"[ok] {len(result.service_catalog.services)} service catalog entries validated")
     print("[ok] Airtable configuration validated (no network request made)")
+    print("[ok] Codex command available")
     print("[ok] Output location ready")
     print(f"\nPlanned run directory: {result.output_plan.run_directory}")
     print(f"Log: {result.output_plan.log_path}")
@@ -183,39 +197,81 @@ def _run_invoice_treatment_mapping(
 
 
 def _print_mapping_result(
-    extraction_cats: tuple[ExtractionCat, ...], extraction_path: Path
+    extraction_cats: tuple[ExtractionCat, ...],
 ) -> None:
-    """Print the mapping summary and published artifact location."""
+    """Print the invoice-to-treatment mapping summary."""
     appointment_count = sum(len(cat.appointments) for cat in extraction_cats)
     print("\nStage 3: Invoice-to-treatment-sheet mapping")
     print(f"[ok] {appointment_count} appointment(s) matched one-to-one")
     print("[ok] Invoice services mapped to Airtable service names")
-    print(f"[ok] Extraction artifact published: {extraction_path}")
     print("\nStage 3 complete.")
-    print("Airtable retrieval and cat matching are not implemented yet.")
 
 
-def _publish_extraction(
+def _run_airtable_retrieval(preflight: PreflightResult) -> AirtableSnapshot:
+    """Query, normalize, and log the complete read-only Airtable scope."""
+    snapshot = query_airtable_snapshot(preflight.config.airtable, preflight.config.run_date)
+    append_pipeline_log(
+        preflight.output_plan,
+        (
+            "Stage 4 Airtable retrieval passed.",
+            f"Validated {snapshot.appointment_record_count} appointment record(s).",
+            f"Validated {snapshot.linked_cat_count} linked cat record(s).",
+        ),
+        sensitive_values=(preflight.config.airtable.token,),
+    )
+    return snapshot
+
+
+def _publish_snapshots(
     preflight: PreflightResult,
     extraction_cats: tuple[ExtractionCat, ...],
     invoice: Invoice,
-) -> Path:
-    """Publish extraction JSON and record its path only after atomic success."""
-    # Publication owns the first run-directory creation; the persistent log is
-    # updated only after the atomic artifact write succeeds.
-    extraction_path = publish_extraction(
+    airtable_snapshot: AirtableSnapshot,
+) -> tuple[Path, Path]:
+    """Publish paired extraction and Airtable snapshots after full validation."""
+    paths = publish_run_snapshots(
         preflight.output_plan,
         preflight.input_files.manifest_path,
         preflight.config.run_date,
         extraction_cats,
         invoice,
+        airtable_snapshot,
     )
     append_pipeline_log(
         preflight.output_plan,
-        (f"Published extraction artifact: {extraction_path}",),
+        ("Published extraction and Airtable snapshot artifacts.",),
         sensitive_values=(preflight.config.airtable.token,),
     )
-    return extraction_path
+    return paths
+
+
+def _print_airtable_result(cat_count: int, extraction_path: Path, needs_invoice_path: Path) -> None:
+    """Print Airtable retrieval counts and both authoritative snapshot paths."""
+    print("\nStage 4: Airtable retrieval")
+    print(f"[ok] {cat_count} linked cat record(s) validated")
+    print(f"[ok] Extraction artifact published: {extraction_path}")
+    print(f"[ok] Airtable snapshot published: {needs_invoice_path}")
+    print("\nStage 4 complete.")
+
+
+def _run_cat_matching(preflight: PreflightResult) -> tuple[Path, Path, int]:
+    """Invoke Codex, publish its validated artifacts, and log safe counts."""
+    result = run_codex_cat_matching(preflight.output_plan.run_directory)
+    append_pipeline_log(
+        preflight.output_plan,
+        ("Stage 5 Codex cat matching passed.", f"Review entries: {result[2]}."),
+        sensitive_values=(preflight.config.airtable.token,),
+    )
+    return result
+
+
+def _print_cat_matching_result(mapping_path: Path, review_path: Path, review_count: int) -> None:
+    """Print matching artifact paths and the operator-review count."""
+    print("\nStage 5: Codex cat matching")
+    print(f"[ok] Cat mapping published: {mapping_path}")
+    print(f"[ok] Cat match review published: {review_path}")
+    print(f"[ok] {review_count} review entr{'y' if review_count == 1 else 'ies'}")
+    print("\nStage 5 complete.")
 
 
 def _argument_parser() -> argparse.ArgumentParser:

@@ -11,6 +11,7 @@ import preflight
 import pytest
 from errors import PipelineError
 from invoice_pipeline import main
+from models_airtable import AirtableCatRecord, AirtableSnapshot
 from models_invoice import Invoice, InvoiceAppointment, InvoiceServiceLine
 from models_treatment_sheet import TreatmentCat, TreatmentSheetAppointment
 
@@ -20,6 +21,39 @@ AIRTABLE_ENV = {
     "AIRTABLE_APPOINTMENTS_TABLE_ID": "tblAppointments1",
     "AIRTABLE_CATS_TABLE_ID": "tblCats1",
 }
+
+
+@pytest.fixture(autouse=True)
+def _replace_external_matching_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replace Airtable and Codex calls with deterministic complete results."""
+    snapshot = AirtableSnapshot(
+        date(2026, 9, 3),
+        "NLF",
+        "Nine Lives Foundation",
+        1,
+        (
+            AirtableCatRecord(
+                "recCat1",
+                "recAppointment1",
+                "Sample Cat",
+                "Pet",
+                appointment_owner_or_trapper="Sample Owner",
+            ),
+        ),
+    )
+    monkeypatch.setattr(invoice_pipeline, "query_airtable_snapshot", lambda *_args: snapshot)
+
+    def match(run_directory: Path) -> tuple[Path, Path, int]:
+        """Create representative validated outputs for orchestration tests."""
+        mapping = run_directory / "cat_mapping.json"
+        review = run_directory / "cat_match_review.json"
+        mapping.write_text("{}\n", encoding="utf-8")
+        review.write_text("{}\n", encoding="utf-8")
+        return mapping, review, 0
+
+    monkeypatch.setattr(invoice_pipeline, "run_codex_cat_matching", match)
 
 
 def _write_run_inputs(input_dir: Path, *, manifest_date: str = "2026-09-03") -> None:
@@ -127,7 +161,8 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Stage 3: Invoice-to-treatment-sheet mapping" in captured.out
     assert "1 appointment(s) matched one-to-one" in captured.out
     assert "Extraction artifact published:" in captured.out
-    assert "Airtable retrieval and cat matching are not implemented yet" in captured.out
+    assert "Stage 4: Airtable retrieval" in captured.out
+    assert "Stage 5: Codex cat matching" in captured.out
     assert '"source_file"' not in captured.out
     assert '"medical_findings"' not in captured.out
     assert captured.err == ""
@@ -136,6 +171,9 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert artifact["cats"][0]["appointments"]["2026-09-03"]["services"] == {"Spay / Neuter": 125.0}
     assert artifact["invoice"]["total_cost"] == "125.00"
+    assert (artifact_path.parent / "needs_invoice.json").is_file()
+    assert (artifact_path.parent / "cat_mapping.json").is_file()
+    assert (artifact_path.parent / "cat_match_review.json").is_file()
     log_paths = tuple((output_dir / "logs").glob("*.log"))
     assert len(log_paths) == 1
     log_text = log_paths[0].read_text(encoding="utf-8")

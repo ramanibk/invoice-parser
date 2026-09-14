@@ -384,9 +384,19 @@ def test_no_review_skips_terminal_and_viewer_requirements(
 ) -> None:
     """Allow noninteractive execution when review was explicitly disabled."""
     monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=False)))
-    monkeypatch.setattr(preflight.shutil, "which", lambda _command: None)
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda command: "/usr/bin/codex" if command == "codex" else None
+    )
 
     assert validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=False)) is None
+
+
+def test_all_runs_require_codex_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a run before processing when automatic matching cannot start."""
+    monkeypatch.setattr(preflight.shutil, "which", lambda _command: None)
+
+    with pytest.raises(PipelineError, match="requires the 'codex' command"):
+        validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=False))
 
 
 def test_review_requires_interactive_terminal(
@@ -394,6 +404,7 @@ def test_review_requires_interactive_terminal(
 ) -> None:
     """Reject interactive review when standard input is not a terminal."""
     monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=False)))
+    monkeypatch.setattr(preflight.shutil, "which", lambda _command: "/usr/bin/tool")
 
     with pytest.raises(PipelineError, match="interactive review requires terminal input"):
         validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True))
@@ -404,7 +415,9 @@ def test_review_requires_pdf_viewer_command(
 ) -> None:
     """Reject interactive review when the platform PDF opener is unavailable."""
     monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=True)))
-    monkeypatch.setattr(preflight.shutil, "which", lambda _command: None)
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda command: "/usr/bin/codex" if command == "codex" else None
+    )
 
     with pytest.raises(PipelineError, match="requires the macOS 'open' command"):
         validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True))

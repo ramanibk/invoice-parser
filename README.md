@@ -6,9 +6,37 @@ volunteer-processing runbooks in `~/Documents/Projects/invoice-instructions`. Ge
 to the sibling `../bac-outputs/` directory by default and do not belong in any of the three
 repositories.
 
-The files under `src/prompts/` are packaged runtime inputs used by this tool's
-`generate-cat-mapping-prompt` command. They remain here so the installed command is self-contained;
-broader operator and volunteer instructions belong in `invoice-instructions`.
+The files under `src/prompts/` are the authoritative AI instructions used by automatic Codex cat
+matching. Broader operator and volunteer instructions belong in `invoice-instructions`.
+
+## Current pipeline
+
+Run the active five-stage pipeline with:
+
+```bash
+source .env
+uv run invoice-pipeline --date 09/03 /path/to/run-inputs
+```
+
+Use `--no-review` to skip the interactive PDF review or `--outputs-dir PATH` to change the generated
+output parent. The pipeline validates all sources before publication, then runs these stages:
+
+1. Extract and review the invoice.
+2. Extract and review every treatment sheet.
+3. Match invoice appointments to treatment-sheet appointments and map service costs.
+4. Query the read-only Airtable Needs Invoice scope and atomically publish the paired
+   `extraction.json` and normalized `needs_invoice.json` snapshots.
+5. Run `codex exec` in an ephemeral read-only sandbox, validate its structured identity matches,
+   and publish `cat_mapping.json` with `cat_match_review.json`.
+
+Codex uses names, owners, addresses, microchips, and vouchers as strong identity evidence. Gender,
+color, age, appointment context, services, and cost are supporting evidence only. Codex never writes
+the artifacts itself: the Python pipeline validates source IDs, exact display names, one-to-one
+assignments, and complete review coverage before writing both output files.
+
+If Airtable validation fails, no run directory is published. If Codex fails, the paired extraction
+and Airtable snapshots remain as resumable state and neither matching artifact is created. A
+non-empty `cat_match_review.json` is a successful first pass that requires operator resolution.
 
 This package reads NLF treatment-sheet PDFs and emits cat records. The full patient name is preserved
 exactly as printed in `display_name`, including markers such as `(F)` or `(?)`. When a manifest is
@@ -74,9 +102,9 @@ Without an invoice, `services` is an empty object and `total_cost` is `null`.
 Pages without a `Service Date` header are treated as continuation pages rather than additional
 appointments.
 
-## Package organization
+## Legacy package organization
 
-The manifest-driven extraction workflow is specific to Nine Lives Foundation. All of its code and
+The retained pre-rewrite workflow is specific to Nine Lives Foundation. All of its code and
 reference data live under `treatment_sheet_parser/nlf/`, including manifest validation, treatment
 sheet and invoice parsing, identity matching, service mapping, output construction, and its CLI.
 

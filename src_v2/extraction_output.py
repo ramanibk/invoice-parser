@@ -1,6 +1,5 @@
-"""Build and atomically publish validated extraction JSON artifacts."""
+"""Build complete validated extraction JSON documents in memory."""
 
-import json
 from dataclasses import asdict
 from datetime import date as Date
 from decimal import Decimal
@@ -14,42 +13,8 @@ from models_invoice import Invoice
 from models_validation import _require_date
 from pipeline_logging import OutputPlan
 
-EXTRACTION_FILENAME = "extraction.json"
 
-
-def publish_extraction(
-    plan: OutputPlan,
-    manifest_path: Path,
-    run_date: Date,
-    extraction_cats: tuple[ExtractionCat, ...],
-    invoice: Invoice,
-) -> Path:
-    """Validate and atomically publish a complete extraction artifact."""
-    # Build and serialize everything before creating the run directory. Validation
-    # failures therefore cannot leave a partial run behind.
-    payload = _build_extraction_payload(
-        plan,
-        manifest_path,
-        run_date,
-        extraction_cats,
-        invoice,
-    )
-    serialized = _serialize(payload)
-    artifact_path = plan.run_directory / EXTRACTION_FILENAME
-    temporary_path = plan.run_directory / f".{EXTRACTION_FILENAME}.tmp"
-    _create_run_directory(plan)
-    try:
-        # The temporary file lives beside the destination, allowing replace to
-        # publish the complete bytes as one filesystem operation.
-        temporary_path.write_text(serialized, encoding="utf-8")
-        temporary_path.replace(artifact_path)
-    except OSError as exc:
-        _clean_failed_write(temporary_path, plan.run_directory)
-        raise PipelineError(f"could not write extraction artifact {artifact_path}: {exc}") from exc
-    return artifact_path
-
-
-def _build_extraction_payload(
+def build_extraction_payload(
     plan: OutputPlan,
     manifest_path: Path,
     run_date: Date,
@@ -144,34 +109,6 @@ def _build_appointment_payload(
         },
         "total_cost": _money(extraction_appointment.total_cost),
     }
-
-
-def _serialize(payload: dict[str, Any]) -> str:
-    """Serialize the complete payload before starting filesystem publication."""
-    try:
-        return json.dumps(payload, indent=2) + "\n"
-    except (TypeError, ValueError) as exc:
-        raise PipelineError(f"could not serialize extraction artifact: {exc}") from exc
-
-
-def _create_run_directory(plan: OutputPlan) -> None:
-    """Reserve the exact preflighted run directory without reusing a collision."""
-    try:
-        plan.run_directory.mkdir()
-    except OSError as exc:
-        raise PipelineError(f"could not create run directory {plan.run_directory}: {exc}") from exc
-
-
-def _clean_failed_write(temporary_path: Path, run_directory: Path) -> None:
-    """Best-effort remove only incomplete publication state created by this run."""
-    try:
-        temporary_path.unlink(missing_ok=True)
-        # rmdir succeeds only when this failed publication left the directory
-        # empty, so unrelated or concurrently created files are preserved.
-        run_directory.rmdir()
-    except OSError:
-        # Cleanup failure must not replace the original publication error.
-        pass
 
 
 def _money(value: Decimal) -> str:

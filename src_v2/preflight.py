@@ -152,9 +152,10 @@ def load_run_manifest(expected_run_date: Date, input_files: RunInputFiles) -> Ru
 
 
 def validate_runtime_readiness(config: PipelineConfig) -> None:
-    """Require terminal and PDF-viewer access only for interactive review runs."""
+    """Require Codex plus terminal and PDF-viewer access when review is enabled."""
     if not isinstance(config, PipelineConfig):
         raise PipelineError("runtime readiness requires PipelineConfig")
+    _require_codex()
     if not config.review_enabled:
         return
     _require_interactive_terminal()
@@ -217,6 +218,12 @@ def _require_pdf_viewer() -> None:
     """Require the macOS command used to open source PDFs for review."""
     if shutil.which("open") is None:
         raise PipelineError("interactive review requires the macOS 'open' command")
+
+
+def _require_codex() -> None:
+    """Require the local Codex executable used by automatic cat matching."""
+    if shutil.which("codex") is None:
+        raise PipelineError("automatic cat matching requires the 'codex' command")
 
 
 def _list_input_directory(input_dir: Path) -> tuple[Path, ...]:
