@@ -12,6 +12,7 @@ import pytest
 from errors import PipelineError
 from invoice_pipeline import main
 from models_invoice import Invoice, InvoiceAppointment, InvoiceServiceLine
+from models_treatment_sheet import CatRecord, TreatmentSheetAppointment
 
 AIRTABLE_ENV = {
     "AIRTABLE_TOKEN": "secret",
@@ -63,6 +64,20 @@ def _parsed_invoice(path: Path) -> Invoice:
     return Invoice(path, (appointment,), Decimal("125.00"))
 
 
+def _parsed_records() -> tuple[CatRecord, ...]:
+    """Return one valid treatment-sheet record for CLI orchestration tests."""
+    appointment = TreatmentSheetAppointment(date(2026, 9, 3), "Female", None, "Black", None)
+    return (
+        CatRecord(
+            "26SEP03-NLF-1",
+            "Sample Cat",
+            "Sample Cat",
+            "Sample Owner",
+            (appointment,),
+        ),
+    )
+
+
 def test_cli_runs_preflight_and_prints_complete_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -80,6 +95,9 @@ def test_cli_runs_preflight_and_prints_complete_summary(
         review_calls.append((path, description, review_enabled))
 
     monkeypatch.setattr(invoice_pipeline, "parse_invoice", _parsed_invoice)
+    monkeypatch.setattr(
+        invoice_pipeline, "extract_treatment_sheets", lambda _manifest: _parsed_records()
+    )
     monkeypatch.setattr(invoice_pipeline, "review_pdf", record_review)
 
     status = main(
@@ -101,7 +119,9 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "[ok] 67 service catalog entries validated" in captured.out
     assert "Stage 1: Invoice extraction" in captured.out
     assert "Invoice total validated: USD 125.00" in captured.out
-    assert "later extraction stages are not implemented yet" in captured.out
+    assert "Stage 2: Treatment-sheet extraction" in captured.out
+    assert "1 treatment sheet(s) parsed and identity-checked" in captured.out
+    assert "later pipeline stages are not implemented yet" in captured.out
     assert captured.err == ""
     assert not (output_dir / "26SEP03-NLF").exists()
     log_paths = tuple((output_dir / "logs").glob("*.log"))
@@ -111,7 +131,15 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert f"Future run directory: {output_dir / '26SEP03-NLF'}" in log_text
     assert AIRTABLE_ENV["AIRTABLE_TOKEN"] not in log_text
     assert "Stage 1 invoice extraction passed." in log_text
-    assert review_calls == [(input_dir / "clinic-invoice.pdf", "invoice PDF", False)]
+    assert "Stage 2 treatment-sheet extraction passed." in log_text
+    assert review_calls == [
+        (input_dir / "clinic-invoice.pdf", "invoice PDF", False),
+        (
+            input_dir / "sample-cat.pdf",
+            "treatment sheet sample-cat.pdf",
+            False,
+        ),
+    ]
 
 
 def test_cli_reports_invoice_failure_without_partial_run_output(
@@ -150,6 +178,51 @@ def test_cli_reports_invoice_failure_without_partial_run_output(
     captured = capsys.readouterr()
     assert status == 1
     assert "invoice appointment header is malformed" in captured.err
+    assert not (output_dir / "26SEP03-NLF").exists()
+
+
+def test_cli_reports_treatment_sheet_failure_without_partial_run_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Stop after Stage 1 when the treatment-sheet batch fails validation."""
+    input_dir = tmp_path / "inputs"
+    output_dir = tmp_path / "outputs"
+    _write_run_inputs(input_dir)
+    _set_airtable_environment(monkeypatch)
+    review_calls = []
+    monkeypatch.setattr(invoice_pipeline, "parse_invoice", _parsed_invoice)
+    monkeypatch.setattr(
+        invoice_pipeline,
+        "review_pdf",
+        lambda path, description, *, review_enabled: review_calls.append(
+            (path, description, review_enabled)
+        ),
+    )
+
+    def fail_sheets(_manifest: object) -> tuple[CatRecord, ...]:
+        """Simulate a manifest identity mismatch after invoice success."""
+        raise PipelineError("sample-cat.pdf: owner mismatch")
+
+    monkeypatch.setattr(invoice_pipeline, "extract_treatment_sheets", fail_sheets)
+
+    status = main(
+        [
+            "--date",
+            "09/03",
+            "--no-review",
+            "--outputs-dir",
+            str(output_dir),
+            str(input_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "Stage 1 complete." in captured.out
+    assert "sample-cat.pdf: owner mismatch" in captured.err
+    assert review_calls == [(input_dir / "clinic-invoice.pdf", "invoice PDF", False)]
     assert not (output_dir / "26SEP03-NLF").exists()
 
 

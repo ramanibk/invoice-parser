@@ -1,10 +1,11 @@
 # Invoice pipeline recipe
 
 This is the living runbook for the rewritten invoice pipeline. The `invoice-pipeline` command
-performs preflight and Stage 1 invoice extraction: it validates all source identities and runtime
-prerequisites, plans the future output location, starts a persistent log, parses the invoice PDF,
-and validates every printed monetary total. It does not yet parse treatment sheets, query Airtable,
-create a run directory, or publish extraction artifacts.
+performs preflight, Stage 1 invoice extraction, and Stage 2 treatment-sheet extraction. It validates
+all source identities and runtime prerequisites, plans the future output location, starts a
+persistent log, validates every printed invoice total, parses every treatment sheet, and checks its
+printed cat and owner identities against the manifest. It does not yet query Airtable, match invoice
+services to cats, create a run directory, or publish extraction artifacts.
 
 ## 1. Install the project
 
@@ -66,7 +67,7 @@ may also be present as a complete set; its counts must match the inputs and `fai
 }
 ```
 
-## 4. Run preflight and invoice extraction
+## 4. Run preflight and extraction
 
 Pass the configured-year date in `MM/DD` form and the input directory:
 
@@ -76,8 +77,9 @@ uv run --env-file .env invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
 
 Interactive review is the default. Preflight checks that terminal input and the macOS PDF viewer
 are available. After Stage 1 parses the invoice and validates its service, appointment, and invoice
-totals with exact decimal arithmetic, the command opens the source PDF and requires explicit
-approval. For automation or noninteractive testing, disable review explicitly:
+totals with exact decimal arithmetic, the command opens the invoice and requires explicit approval.
+Stage 2 then parses and identity-checks every treatment sheet before opening each one for approval.
+For automation or noninteractive testing, disable review explicitly:
 
 ```bash
 uv run --env-file .env invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
@@ -129,13 +131,27 @@ Stage 1: Invoice extraction
 [ok] Invoice review approved
 
 Stage 1 complete.
-No run directory was created; later extraction stages are not implemented yet.
+
+Stage 2: Treatment-sheet extraction
+[ok] 2 treatment sheet(s) parsed and identity-checked
+[ok] 2 appointment(s) parsed
+[ok] Treatment-sheet review approved
+
+Stage 2 complete.
+No run directory was created; later pipeline stages are not implemented yet.
 ```
 
 Stage 1 preserves invoice appointment identity and service descriptions for later matching. It
 rejects unreadable PDFs, malformed appointment rows, non-numeric service prices, missing or
 inconsistent totals, service sums that differ from their appointment total, and appointment totals
 that differ from the invoice total. The service catalog is not applied until a later stage.
+
+Stage 2 preserves the complete printed cat display name, dated characteristics, and exact medical
+field text. Pages without a service-date header continue the preceding appointment. Before returning
+any records, the stage requires every owner to match its manifest entry after case and punctuation
+normalization, and every manifest cat name to occur as a contiguous whole-token phrase in the printed
+display name. A malformed sheet or identity mismatch stops the batch without creating a run
+directory.
 
 ## 5. Verify repository changes
 

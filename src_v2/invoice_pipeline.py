@@ -8,11 +8,13 @@ from pathlib import Path
 from errors import PipelineError
 from invoice_extraction import parse_invoice
 from models_invoice import Invoice
+from models_treatment_sheet import CatRecord
 from pipeline_config import PipelineConfig, build_pipeline_config
 from pipeline_logging import append_pipeline_log
 from preflight import PreflightResult, run_preflight
 from resolve_run_identity import resolve_run_date
 from review import review_pdf
+from treatment_sheet_extraction import extract_treatment_sheets
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -24,10 +26,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = run_preflight(config)
         _print_preflight_result(result)
         invoice = _run_invoice_extraction(result)
+        _print_invoice_result(invoice, config.review_enabled)
+        records = _run_treatment_sheet_extraction(result)
+        _print_treatment_sheet_result(records, config.review_enabled)
     except PipelineError as exc:
         print(f"invoice-pipeline: error: {exc}", file=sys.stderr)
         return 1
-    _print_invoice_result(invoice, config.review_enabled)
     return 0
 
 
@@ -88,7 +92,7 @@ def _run_invoice_extraction(result: PreflightResult) -> Invoice:
 
 
 def _print_invoice_result(invoice: Invoice, review_enabled: bool) -> None:
-    """Print the validated invoice summary and current safe stopping point."""
+    """Print the validated invoice summary."""
     service_count = sum(len(appointment.services) for appointment in invoice.appointments)
     review_status = "approved" if review_enabled else "skipped"
     print("\nStage 1: Invoice extraction")
@@ -97,7 +101,40 @@ def _print_invoice_result(invoice: Invoice, review_enabled: bool) -> None:
     print(f"[ok] Invoice total validated: USD {invoice.total_cost:.2f}")
     print(f"[ok] Invoice review {review_status}")
     print("\nStage 1 complete.")
-    print("No run directory was created; later extraction stages are not implemented yet.")
+
+
+def _run_treatment_sheet_extraction(result: PreflightResult) -> tuple[CatRecord, ...]:
+    """Parse, validate, review, and log every Stage 2 treatment sheet."""
+    records = extract_treatment_sheets(result.manifest)
+    for path in result.manifest.treatment_sheet_paths:
+        review_pdf(
+            path,
+            f"treatment sheet {path.name}",
+            review_enabled=result.config.review_enabled,
+        )
+    appointment_count = sum(len(record.appointments) for record in records)
+    append_pipeline_log(
+        result.output_plan,
+        (
+            "Stage 2 treatment-sheet extraction passed.",
+            f"Validated {len(records)} treatment sheet(s).",
+            f"Validated {appointment_count} treatment-sheet appointment(s).",
+        ),
+        sensitive_values=(result.config.airtable.token,),
+    )
+    return records
+
+
+def _print_treatment_sheet_result(records: tuple[CatRecord, ...], review_enabled: bool) -> None:
+    """Print the validated treatment-sheet summary and current safe stopping point."""
+    appointment_count = sum(len(record.appointments) for record in records)
+    review_status = "approved" if review_enabled else "skipped"
+    print("\nStage 2: Treatment-sheet extraction")
+    print(f"[ok] {len(records)} treatment sheet(s) parsed and identity-checked")
+    print(f"[ok] {appointment_count} appointment(s) parsed")
+    print(f"[ok] Treatment-sheet review {review_status}")
+    print("\nStage 2 complete.")
+    print("No run directory was created; later pipeline stages are not implemented yet.")
 
 
 def _argument_parser() -> argparse.ArgumentParser:
