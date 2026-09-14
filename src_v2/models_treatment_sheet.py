@@ -9,6 +9,7 @@ from errors import PipelineError
 from global_constants import LOCATION_CODE, RUN_YEAR
 from models_validation import (
     _require_date,
+    _require_microchip_number,
     _require_non_empty_tuple_of,
     _require_string,
     _require_text,
@@ -77,7 +78,7 @@ class TreatmentSheetAppointment:
         """Validate the appointment date, characteristics, and medical findings."""
         _require_date(self.service_date, "appointment service date")
         _validate_gender(self.gender)
-        _validate_microchip(self.microchip_number)
+        _require_microchip_number(self.microchip_number, "appointment microchip")
         _validate_optional_text(self.color, "appointment color")
         _validate_optional_text(self.weight, "appointment weight")
         if not isinstance(self.medical_findings, MedicalFindings):
@@ -117,14 +118,6 @@ def _validate_gender(value: object) -> None:
     if value not in GENDERS:
         choices = ", ".join(sorted(GENDERS))
         raise PipelineError(f"appointment gender must be one of: {choices}")
-
-
-def _validate_microchip(value: object) -> None:
-    """Require a blank microchip or the printed 9-to-15-digit identifier."""
-    if value is not None and (
-        not isinstance(value, str) or re.fullmatch(r"\d{9,15}", value) is None
-    ):
-        raise PipelineError("appointment microchip must contain 9 to 15 digits or be null")
 
 
 def _validate_optional_text(value: object, field_name: str) -> None:

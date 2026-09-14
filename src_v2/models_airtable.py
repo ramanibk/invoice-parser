@@ -9,6 +9,7 @@ from errors import PipelineError
 from global_constants import LOCATION_CODE, LOCATION_NAME
 from models_validation import (
     _require_date,
+    _require_microchip_number,
     _require_money,
     _require_text,
     _require_tuple_of,
@@ -57,7 +58,7 @@ class AirtableCatRecord:
         _require_text(self.cat_name, "Airtable cat name")
         _require_text(self.appointment_type, "Airtable appointment type")
         _validate_optional_fields(self)
-        _validate_microchip(self.microchip_number)
+        _require_microchip_number(self.microchip_number, "Airtable microchip number")
         _validate_vouchers(self.vouchers)
         _validate_services(self.services)
         if self.total_cost is not None:
@@ -113,14 +114,6 @@ def _validate_optional_fields(record: AirtableCatRecord) -> None:
         value = getattr(record, name)
         if value is not None:
             _require_text(value, f"Airtable {name.replace('_', ' ')}")
-
-
-def _validate_microchip(value: object) -> None:
-    """Require a blank microchip or its normalized 9-to-15-digit identifier."""
-    if value is not None and (
-        not isinstance(value, str) or re.fullmatch(r"\d{9,15}", value) is None
-    ):
-        raise PipelineError("Airtable microchip number must contain 9 to 15 digits or be null")
 
 
 def _validate_vouchers(value: object) -> None:

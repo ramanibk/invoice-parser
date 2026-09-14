@@ -1,5 +1,6 @@
 """Provide small validation primitives shared by pipeline data models."""
 
+import re
 from datetime import date as Date
 from datetime import datetime as DateTime
 from decimal import Decimal
@@ -39,6 +40,14 @@ def _require_money(value: object, field_name: str) -> None:
         raise PipelineError(f"{field_name} must be nonnegative")
     if value.as_tuple().exponent < -2:
         raise PipelineError(f"{field_name} must have at most two fractional places")
+
+
+def _require_microchip_number(value: object, field_name: str) -> None:
+    """Require a null value or a normalized 9-to-15-digit microchip number."""
+    if value is not None and (
+        not isinstance(value, str) or re.fullmatch(r"\d{9,15}", value) is None
+    ):
+        raise PipelineError(f"{field_name} must contain 9 to 15 digits or be null")
 
 
 def _require_tuple_of(

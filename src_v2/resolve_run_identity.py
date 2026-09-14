@@ -1,7 +1,6 @@
 """Resolve short run dates and build stable identifiers for pipeline records."""
 
 import re
-from collections.abc import Callable
 from datetime import date as Date
 
 from errors import PipelineError
@@ -26,12 +25,11 @@ MONTH_ABBREVIATIONS = (
 def resolve_run_date(
     value: str,
     *,
-    today: Date | None = None,
-    input_fn: Callable[[str], str] = input,
+    current_date: Date | None = None,
 ) -> Date:
     """Resolve a strict ``MM/DD`` value using the configured global run year."""
-    current_date = today or Date.today()
-    _confirm_run_year(current_date.year, input_fn)
+    effective_date = current_date or Date.today()
+    _confirm_configured_run_year(effective_date.year)
     if re.fullmatch(r"\d{2}/\d{2}", value) is None:
         raise PipelineError("run date must use MM/DD format")
     month, day = (int(part) for part in value.split("/"))
@@ -41,8 +39,8 @@ def resolve_run_date(
         raise PipelineError(f"run date must be valid in {RUN_YEAR}") from exc
 
 
-def _confirm_run_year(current_year: int, input_fn: Callable[[str], str]) -> None:
-    """Require confirmation when the configured year differs from today's year."""
+def _confirm_configured_run_year(current_year: int) -> None:
+    """Prompt before using the configured year when it differs from the current year."""
     if current_year == RUN_YEAR:
         return
     prompt = (
@@ -50,7 +48,7 @@ def _confirm_run_year(current_year: int, input_fn: Callable[[str], str]) -> None
         f"Use {RUN_YEAR}? [y/N] "
     )
     try:
-        response = input_fn(prompt)
+        response = input(prompt)
     except (EOFError, OSError) as exc:
         raise PipelineError(f"could not confirm configured run year {RUN_YEAR}") from exc
     if response.strip().casefold() not in {"y", "yes"}:

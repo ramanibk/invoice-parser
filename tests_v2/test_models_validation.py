@@ -7,6 +7,7 @@ import pytest
 from errors import PipelineError
 from models_validation import (
     _require_date,
+    _require_microchip_number,
     _require_money,
     _require_non_empty_tuple_of,
     _require_string,
@@ -58,6 +59,19 @@ def test_money_validation_accepts_exact_decimal_value() -> None:
 
     assert _require_money(value, "cost") is None
     assert value.as_tuple().exponent == -2
+
+
+@pytest.mark.parametrize("value", [None, "123456789", "123456789012345"])
+def test_microchip_validation_accepts_null_or_normalized_digits(value: str | None) -> None:
+    """Accept missing microchips and identifiers within the shared digit limits."""
+    assert _require_microchip_number(value, "microchip") is None
+
+
+@pytest.mark.parametrize("value", ["12345678", "1234567890123456", "Already chipped", 123])
+def test_microchip_validation_rejects_malformed_values(value: object) -> None:
+    """Reject out-of-range, annotated, and non-text microchip values."""
+    with pytest.raises(PipelineError, match="microchip must contain 9 to 15 digits or be null"):
+        _require_microchip_number(value, "microchip")
 
 
 @pytest.mark.parametrize("value", [(), [], ["one"]])
