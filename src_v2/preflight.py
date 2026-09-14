@@ -20,6 +20,8 @@ from resolve_run_identity import make_run_id
 from service_catalog import ServiceCatalog, load_service_catalog
 
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
+MANIFEST_METADATA_KEYS = frozenset({"invoiceCount", "total", "completed", "failures"})
+FULL_MANIFEST_KEYS = MANIFEST_KEYS | MANIFEST_METADATA_KEYS
 MANIFEST_ENTRY_KEYS = frozenset({"owner", "catName", "fileName"})
 NLF_INVOICE_FILENAME_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2} \d+ Nine Lives Foundation \$\d+(?:,\d{3})*\.\d{2}\.pdf",
@@ -147,7 +149,7 @@ def load_run_manifest(expected_run_date: Date, input_files: RunInputFiles) -> Ru
     if not isinstance(input_files, RunInputFiles):
         raise PipelineError("input files must be RunInputFiles")
     manifest_data = _read_manifest_json(input_files.manifest_path)
-    _require_exact_keys(manifest_data, MANIFEST_KEYS, "manifest")
+    _require_manifest_keys(manifest_data)
     manifest_date = _parse_manifest_date(manifest_data["date"])
     if manifest_date != expected_run_date:
         raise PipelineError(
@@ -155,6 +157,7 @@ def load_run_manifest(expected_run_date: Date, input_files: RunInputFiles) -> Ru
             f"manifest date {manifest_date.isoformat()}"
         )
     entries = _parse_manifest_entries(manifest_data["treatmentSheets"])
+    _validate_manifest_metadata(manifest_data, len(entries))
     _require_unique_filenames(entries)
     _reject_invoice_overlap(entries, input_files.invoice_path)
     # Resolve every declared source before constructing the accepted manifest.
@@ -283,6 +286,33 @@ def _parse_manifest_entry(value: object, index: int) -> ManifestEntry:
         cat_name=_required_manifest_text(value, "catName", location),
         filename=_required_manifest_text(value, "fileName", location),
     )
+
+
+def _require_manifest_keys(value: dict[str, Any]) -> None:
+    """Accept either the core manifest or its complete downloader metadata envelope."""
+    actual = frozenset(value)
+    if actual not in (MANIFEST_KEYS, FULL_MANIFEST_KEYS):
+        required = ", ".join(sorted(FULL_MANIFEST_KEYS))
+        raise PipelineError(
+            f"manifest must contain either its two core fields or exactly: {required}"
+        )
+
+
+def _validate_manifest_metadata(value: dict[str, Any], sheet_count: int) -> None:
+    """Validate downloader counts and require a complete, failure-free source run."""
+    if frozenset(value) == MANIFEST_KEYS:
+        return
+    if value["failures"] != []:
+        raise PipelineError("manifest failures must be an empty array")
+    _require_manifest_count(value["invoiceCount"], 1, "invoiceCount")
+    _require_manifest_count(value["total"], sheet_count, "total")
+    _require_manifest_count(value["completed"], sheet_count, "completed")
+
+
+def _require_manifest_count(value: object, expected: int, field_name: str) -> None:
+    """Require one integer manifest counter to match its derived expected value."""
+    if not isinstance(value, int) or isinstance(value, bool) or value != expected:
+        raise PipelineError(f"manifest {field_name} must equal {expected}")
 
 
 def _required_manifest_text(value: dict[str, Any], key: str, location: str) -> str:

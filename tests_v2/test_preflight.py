@@ -235,6 +235,51 @@ def test_loads_complete_manifest_in_source_order(tmp_path: Path) -> None:
     assert manifest.treatment_sheet_paths == (tmp_path / "Nebula.pdf", tmp_path / "Miso.pdf")
 
 
+def test_loads_manifest_with_valid_downloader_metadata(tmp_path: Path) -> None:
+    """Accept a complete downloader manifest when its counts confirm all sheets succeeded."""
+    entries = [{"owner": "Alexa", "catName": "Nebula", "fileName": "Nebula.pdf"}]
+    payload = {
+        "date": "2026-09-03",
+        "invoiceCount": 1,
+        "total": 1,
+        "completed": 1,
+        "treatmentSheets": entries,
+        "failures": [],
+    }
+    _write_valid_manifest(tmp_path, entries)
+    (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+
+    manifest = load_run_manifest(date(2026, 9, 3), discover_run_input_files(tmp_path))
+
+    assert len(manifest.entries) == 1
+
+
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    [
+        ({"invoiceCount": 2, "total": 1, "completed": 1, "failures": []}, "invoiceCount"),
+        ({"invoiceCount": 1, "total": 2, "completed": 1, "failures": []}, "total"),
+        ({"invoiceCount": 1, "total": 1, "completed": 0, "failures": []}, "completed"),
+        ({"invoiceCount": 1, "total": 1, "completed": 1, "failures": ["failed"]}, "failures"),
+    ],
+)
+def test_rejects_inconsistent_manifest_metadata(
+    tmp_path: Path,
+    metadata: dict[str, object],
+    message: str,
+) -> None:
+    """Reject metadata that signals missing inputs or disagrees with validated sheets."""
+    entries = [{"owner": "Alexa", "catName": "Nebula", "fileName": "Nebula.pdf"}]
+    payload = {"date": "2026-09-03", "treatmentSheets": entries, **metadata}
+    _write_valid_manifest(tmp_path, entries)
+    (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+
+    with pytest.raises(PipelineError, match=message):
+        load_run_manifest(date(2026, 9, 3), discover_run_input_files(tmp_path))
+
+
 def test_rejects_manifest_date_identity_mismatch(tmp_path: Path) -> None:
     """Reject a manifest belonging to a different configured run date."""
     input_files = _valid_discovered_inputs(tmp_path)
@@ -247,10 +292,10 @@ def test_rejects_manifest_date_identity_mismatch(tmp_path: Path) -> None:
     ("payload", "message"),
     [
         ([], "manifest must contain a JSON object"),
-        ({"date": "2026-09-03"}, "manifest must contain exactly these fields"),
+        ({"date": "2026-09-03"}, "manifest must contain either its two core fields"),
         (
             {"date": "2026-09-03", "treatmentSheets": [], "extra": True},
-            "manifest must contain exactly these fields",
+            "manifest must contain either its two core fields",
         ),
         (
             {"date": "09/03/2026", "treatmentSheets": [{}]},

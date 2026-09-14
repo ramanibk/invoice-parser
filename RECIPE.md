@@ -30,19 +30,22 @@ requiring the assignments to use shell-specific `export` syntax.
 
 ## 3. Prepare read-only inputs
 
-Place `manifest.json`, all treatment-sheet PDFs referenced by it, and exactly one PDF whose filename
-contains `invoice` (case-insensitive) in one directory. Treat all of these files as read-only.
+Place `manifest.json`, all treatment-sheet PDFs referenced by it, and exactly one invoice PDF in one
+directory. The preferred invoice filename format is
+`YYYY-MM-DD NUMBER Nine Lives Foundation $TOTAL.pdf`; legacy names containing `invoice` remain
+supported. Treat all of these files as read-only.
 
 ```text
 ../bac-invoices/run-inputs/
 ├── manifest.json
-├── clinic invoice.pdf
+├── 2026-09-03 5101 Nine Lives Foundation $250.00.pdf
 ├── cat-one-treatment-sheet.pdf
 └── cat-two-treatment-sheet.pdf
 ```
 
 The manifest date must match the command date. Each treatment sheet must use a bare filename from
-the same input directory.
+the same input directory. Downloader metadata (`invoiceCount`, `total`, `completed`, and `failures`)
+may also be present as a complete set; its counts must match the inputs and `failures` must be empty.
 
 ```json
 {
