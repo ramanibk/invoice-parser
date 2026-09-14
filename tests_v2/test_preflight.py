@@ -3,10 +3,19 @@
 import json
 from datetime import date
 from pathlib import Path
+from unittest.mock import Mock
 
+import preflight
 import pytest
 from errors import PipelineError
-from preflight import RunInputFiles, RunManifest, discover_run_input_files, load_run_manifest
+from pipeline_config import AirtableConfig, InputPaths, PipelineConfig
+from preflight import (
+    RunInputFiles,
+    RunManifest,
+    discover_run_input_files,
+    load_run_manifest,
+    validate_runtime_readiness,
+)
 
 
 def _create_valid_inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -42,6 +51,20 @@ def _valid_discovered_inputs(tmp_path: Path) -> RunInputFiles:
     _write_valid_manifest(tmp_path)
     (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
     return discover_run_input_files(tmp_path)
+
+
+def _pipeline_config(tmp_path: Path, *, review_enabled: bool) -> PipelineConfig:
+    """Build valid runtime settings for review-readiness tests."""
+    return PipelineConfig(
+        run_date=date(2026, 9, 3),
+        inputs=InputPaths(
+            tmp_path / "inputs",
+            tmp_path / "service_catalog.json",
+        ),
+        output_dir=tmp_path / "outputs",
+        airtable=AirtableConfig("secret", "appBase1", "tblAppointments1", "tblCats1"),
+        review_enabled=review_enabled,
+    )
 
 
 def test_discovers_manifest_and_one_invoice_without_changes(tmp_path: Path) -> None:
@@ -247,3 +270,44 @@ def test_rejects_invoice_declared_as_treatment_sheet(tmp_path: Path) -> None:
 
     with pytest.raises(PipelineError, match="cannot also be a treatment sheet"):
         load_run_manifest(date(2026, 9, 3), input_files)
+
+
+def test_no_review_skips_terminal_and_viewer_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Allow noninteractive execution when review was explicitly disabled."""
+    monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=False)))
+    monkeypatch.setattr(preflight.shutil, "which", lambda _command: None)
+
+    assert validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=False)) is None
+
+
+def test_review_requires_interactive_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject interactive review when standard input is not a terminal."""
+    monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=False)))
+
+    with pytest.raises(PipelineError, match="interactive review requires terminal input"):
+        validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True))
+
+
+def test_review_requires_pdf_viewer_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject interactive review when the platform PDF opener is unavailable."""
+    monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=True)))
+    monkeypatch.setattr(preflight.shutil, "which", lambda _command: None)
+
+    with pytest.raises(PipelineError, match="requires the macOS 'open' command"):
+        validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True))
+
+
+def test_review_accepts_terminal_and_pdf_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept review mode when terminal input and the PDF opener are available."""
+    monkeypatch.setattr(preflight.sys, "stdin", Mock(isatty=Mock(return_value=True)))
+    monkeypatch.setattr(preflight.shutil, "which", lambda _command: "/usr/bin/open")
+
+    assert validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True)) is None

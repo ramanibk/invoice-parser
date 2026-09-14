@@ -19,23 +19,20 @@ AIRTABLE_ENV_VARS = {
 }
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_DIR.parent / "bac-outputs"
-DEFAULT_SERVICE_MAP_PATH = Path(__file__).with_name("service_mapping.json")
-DEFAULT_SERVICE_OPTIONS_PATH = Path(__file__).with_name("airtable_service_options.json")
+DEFAULT_SERVICE_CATALOG_PATH = Path(__file__).with_name("service_catalog.json")
 
 
 @dataclass(frozen=True)
 class InputPaths:
-    """Identify the source directory and service reference files for one run."""
+    """Identify the source directory and service catalog for one run."""
 
     input_dir: Path
-    service_map_path: Path
-    service_options_path: Path
+    service_catalog_path: Path
 
     def __post_init__(self) -> None:
-        """Require resolved input and JSON reference paths without reading them."""
+        """Require resolved input and catalog paths without reading them."""
         _require_absolute_path(self.input_dir, "input directory")
-        _require_json_path(self.service_map_path, "service map")
-        _require_json_path(self.service_options_path, "service options")
+        _require_json_path(self.service_catalog_path, "service catalog")
 
 
 @dataclass(frozen=True)
@@ -84,8 +81,7 @@ def build_pipeline_config(
     input_dir: str | Path,
     *,
     output_dir: str | Path | None = None,
-    service_map_path: str | Path | None = None,
-    service_options_path: str | Path | None = None,
+    service_catalog_path: str | Path | None = None,
     airtable_token: str | None = None,
     airtable_base_id: str | None = None,
     airtable_appointments_table_id: str | None = None,
@@ -100,16 +96,10 @@ def build_pipeline_config(
     inputs = InputPaths(
         _resolve_path(input_dir, resolved_base_dir, "input directory"),
         _resolve_optional_path(
-            service_map_path,
-            DEFAULT_SERVICE_MAP_PATH,
+            service_catalog_path,
+            DEFAULT_SERVICE_CATALOG_PATH,
             resolved_base_dir,
-            "service map",
-        ),
-        _resolve_optional_path(
-            service_options_path,
-            DEFAULT_SERVICE_OPTIONS_PATH,
-            resolved_base_dir,
-            "service options",
+            "service catalog",
         ),
     )
     airtable = _build_airtable_config(

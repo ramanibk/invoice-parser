@@ -1,0 +1,359 @@
+{
+  "format_version": "1.0",
+  "services": [
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "Spay / Neuter",
+      "recognized_invoice_descriptions": [
+        "Cat Neuter",
+        "Cat Spay"
+      ]
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "Microchip",
+      "recognized_invoice_descriptions": [
+        "Microchip insertion (client provided chip)"
+      ]
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "FVRCP",
+      "recognized_invoice_descriptions": [
+        "FVRCP vaccine - 1 year"
+      ]
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "Rabies",
+      "recognized_invoice_descriptions": [
+        "Rabies 1 year vaccine [0]"
+      ]
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "DAPP",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "Bordetella",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Services",
+      "airtable_service_option": "Leptospirosis",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Pregnant",
+      "recognized_invoice_descriptions": [
+        "Pregnant Surcharge w/LRS Administered"
+      ]
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Lactating",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Pyometra",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Cryptorchid",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Hernia",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "In Heat",
+      "recognized_invoice_descriptions": [
+        "In heat"
+      ]
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Praziquantel",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Abscess",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Exam",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Sedation",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Clavamox",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Convenia",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Amoxicillin",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "X-ray",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Urinalysis",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Cleaning",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Ear Cleaning",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Antibiotic Injection",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Revolution",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "FIV / FeLV Test",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Euthanasia",
+      "recognized_invoice_descriptions": [
+        "Euthanasia"
+      ]
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Nail Trim",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Gabapentin",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Injections",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Tresaderm",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Ear Swab",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Carrier",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "SubQ Fluids",
+      "recognized_invoice_descriptions": [
+        "SQ Fluids w/ surgery"
+      ]
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Carprofen",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Advantage II",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "E-Collar",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Enlarged Uterus",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Ringworm PCR",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Fecal Test",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Pro-Pectalin",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Metronidazole",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Animax Ointment",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Pain Injection",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Waste Fee",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Recheck",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "BNP",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "NexGard Combo",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Eye Stain",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Burial",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Panleuk Snap",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Cerenia",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Radiologist Consultation",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Doxycycline",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Bloodwork (Labs)",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Lysine",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Prescription",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Lump Removal",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Onsior",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Enema",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Cytology",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Mass Removal",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Intubation",
+      "recognized_invoice_descriptions": [
+        "Intubation (cat)"
+      ]
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Erithromycin",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Famciclovir",
+      "recognized_invoice_descriptions": []
+    },
+    {
+      "airtable_field_name": "Additional Services",
+      "airtable_service_option": "Wound Repair",
+      "recognized_invoice_descriptions": []
+    }
+  ]
+}

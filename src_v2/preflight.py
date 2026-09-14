@@ -1,6 +1,8 @@
 """Validate read-only prerequisites before numbered pipeline stages begin."""
 
 import json
+import shutil
+import sys
 from dataclasses import dataclass
 from datetime import date as Date
 from pathlib import Path
@@ -9,6 +11,7 @@ from typing import Any
 from errors import PipelineError
 from models_treatment_sheet import ManifestEntry
 from models_validation import _require_date, _require_non_empty_tuple_of
+from pipeline_config import PipelineConfig
 
 MANIFEST_FILENAME = "manifest.json"
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
@@ -93,11 +96,38 @@ def load_run_manifest(expected_run_date: Date, input_files: RunInputFiles) -> Ru
     entries = _parse_manifest_entries(manifest_data["treatmentSheets"])
     _require_unique_filenames(entries)
     _reject_invoice_overlap(entries, input_files.invoice_path)
+    # Resolve every declared source before constructing the accepted manifest.
     paths = tuple(
         _validated_treatment_sheet_path(input_files.manifest_path.parent, entry)
         for entry in entries
     )
     return RunManifest(manifest_date, entries, paths)
+
+
+def validate_runtime_readiness(config: PipelineConfig) -> None:
+    """Require terminal and PDF-viewer access only for interactive review runs."""
+    if not isinstance(config, PipelineConfig):
+        raise PipelineError("runtime readiness requires PipelineConfig")
+    if not config.review_enabled:
+        return
+    _require_interactive_terminal()
+    _require_pdf_viewer()
+
+
+def _require_interactive_terminal() -> None:
+    """Require standard input to support interactive review responses."""
+    try:
+        interactive = sys.stdin.isatty()
+    except OSError as exc:
+        raise PipelineError(f"could not inspect standard input: {exc}") from exc
+    if not interactive:
+        raise PipelineError("interactive review requires terminal input; use --no-review to skip")
+
+
+def _require_pdf_viewer() -> None:
+    """Require the macOS command used to open source PDFs for review."""
+    if shutil.which("open") is None:
+        raise PipelineError("interactive review requires the macOS 'open' command")
 
 
 def _list_input_directory(input_dir: Path) -> tuple[Path, ...]:

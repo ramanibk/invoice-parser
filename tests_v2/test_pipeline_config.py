@@ -7,8 +7,7 @@ import pytest
 from errors import PipelineError
 from pipeline_config import (
     DEFAULT_OUTPUT_DIR,
-    DEFAULT_SERVICE_MAP_PATH,
-    DEFAULT_SERVICE_OPTIONS_PATH,
+    DEFAULT_SERVICE_CATALOG_PATH,
     AirtableConfig,
     InputPaths,
     PipelineConfig,
@@ -27,8 +26,7 @@ def _input_paths(tmp_path: Path) -> InputPaths:
     """Build valid input paths without creating their targets."""
     return InputPaths(
         tmp_path / "inputs",
-        tmp_path / "service_mapping.json",
-        tmp_path / "service_options.json",
+        tmp_path / "service_catalog.json",
     )
 
 
@@ -80,10 +78,9 @@ def test_input_paths_accept_absent_targets(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("values", "message"),
     [
-        (("inputs", Path("/tmp/map.json"), Path("/tmp/options.json")), "must be a Path"),
-        ((Path("inputs"), Path("/tmp/map.json"), Path("/tmp/options.json")), "must be absolute"),
-        ((Path("/tmp/in"), Path("/tmp/map.txt"), Path("/tmp/options.json")), "JSON path"),
-        ((Path("/tmp/in"), Path("/tmp/map.json"), Path("/tmp/options.txt")), "JSON path"),
+        (("inputs", Path("/tmp/catalog.json")), "must be a Path"),
+        ((Path("inputs"), Path("/tmp/catalog.json")), "must be absolute"),
+        ((Path("/tmp/in"), Path("/tmp/catalog.txt")), "JSON path"),
     ],
 )
 def test_rejects_invalid_input_paths(values: tuple[object, ...], message: str) -> None:
@@ -146,8 +143,7 @@ def test_builds_defaults_without_inspecting_filesystem(tmp_path: Path) -> None:
 
     assert config.run_date == date(2026, 9, 3)
     assert config.inputs.input_dir == tmp_path / "run-inputs"
-    assert config.inputs.service_map_path == DEFAULT_SERVICE_MAP_PATH
-    assert config.inputs.service_options_path == DEFAULT_SERVICE_OPTIONS_PATH
+    assert config.inputs.service_catalog_path == DEFAULT_SERVICE_CATALOG_PATH
     assert config.output_dir == DEFAULT_OUTPUT_DIR
     assert config.airtable.base_id == "appBase1"
     assert config.review_enabled is True
@@ -159,13 +155,11 @@ def test_builds_relative_path_overrides_from_base_directory(tmp_path: Path) -> N
     config = _build(
         tmp_path,
         output_dir="artifacts",
-        service_map_path="references/map.json",
-        service_options_path="references/options.json",
+        service_catalog_path="references/service_catalog.json",
     )
 
     assert config.output_dir == tmp_path / "artifacts"
-    assert config.inputs.service_map_path == tmp_path / "references/map.json"
-    assert config.inputs.service_options_path == tmp_path / "references/options.json"
+    assert config.inputs.service_catalog_path == tmp_path / "references/service_catalog.json"
 
 
 def test_explicit_airtable_values_override_environment(tmp_path: Path) -> None:
@@ -195,7 +189,7 @@ def test_builds_disabled_review_mode(tmp_path: Path) -> None:
         ({"run_date": "09/03"}, "pipeline run date must be a date"),
         ({"input_dir": ""}, "input directory must be non-empty"),
         ({"output_dir": 12}, "output directory must be a path"),
-        ({"service_map_path": "map.txt"}, "service map must be a JSON path"),
+        ({"service_catalog_path": "catalog.txt"}, "service catalog must be a JSON path"),
         ({"env": {}}, "Airtable token must be non-empty"),
         ({"airtable_base_id": "baseWrong"}, "base ID must start with app"),
         ({"review_enabled": "no"}, "review enabled must be a boolean"),
