@@ -6,7 +6,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from errors import PipelineError
-from models_validation import _require_date, _require_non_empty_tuple_of, _require_text
+from models_validation import (
+    _require_date,
+    _require_money,
+    _require_non_empty_tuple_of,
+    _require_text,
+)
 
 SUPPORTED_CURRENCY = "USD"
 
@@ -21,7 +26,7 @@ class InvoiceServiceLine:
     def __post_init__(self) -> None:
         """Require a named service with a valid nonnegative monetary cost."""
         _require_text(self.name, "invoice service name")
-        _validate_money(self.cost, "invoice service cost")
+        _require_money(self.cost, "invoice service cost")
 
 
 @dataclass(frozen=True)
@@ -40,7 +45,7 @@ class InvoiceAppointment:
         _require_non_empty_tuple_of(
             self.services, InvoiceServiceLine, "invoice appointment services"
         )
-        _validate_money(self.total_cost, "invoice appointment total")
+        _require_money(self.total_cost, "invoice appointment total")
 
 
 @dataclass(frozen=True)
@@ -56,21 +61,9 @@ class Invoice:
         """Validate the source identity, appointments, total, and currency."""
         _validate_source_file(self.source_file)
         _require_non_empty_tuple_of(self.appointments, InvoiceAppointment, "invoice appointments")
-        _validate_money(self.total_cost, "invoice total")
+        _require_money(self.total_cost, "invoice total")
         if self.currency != SUPPORTED_CURRENCY:
             raise PipelineError(f"invoice currency must be {SUPPORTED_CURRENCY}")
-
-
-def _validate_money(value: object, field_name: str) -> None:
-    """Require a finite nonnegative Decimal with at most two fractional places."""
-    if not isinstance(value, Decimal):
-        raise PipelineError(f"{field_name} must be a Decimal")
-    if not value.is_finite():
-        raise PipelineError(f"{field_name} must be finite")
-    if value < 0:
-        raise PipelineError(f"{field_name} must be nonnegative")
-    if value.as_tuple().exponent < -2:
-        raise PipelineError(f"{field_name} must have at most two fractional places")
 
 
 def _validate_source_file(value: object) -> None:

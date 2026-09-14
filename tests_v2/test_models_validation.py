@@ -1,14 +1,17 @@
 """Tests for validation primitives shared by pipeline models."""
 
 from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from errors import PipelineError
 from models_validation import (
     _require_date,
+    _require_money,
     _require_non_empty_tuple_of,
     _require_string,
     _require_text,
+    _require_tuple_of,
 )
 
 
@@ -42,6 +45,19 @@ def test_typed_tuple_validation_returns_original_values() -> None:
     values = ("one", "two")
 
     assert _require_non_empty_tuple_of(values, str, "names") is values
+
+
+def test_typed_tuple_validation_allows_an_empty_tuple() -> None:
+    """Allow empty typed collections when their domain does not require entries."""
+    assert _require_tuple_of((), str, "names") == ()
+
+
+def test_money_validation_accepts_exact_decimal_value() -> None:
+    """Accept a finite nonnegative Decimal without converting its precision."""
+    value = Decimal("10.20")
+
+    assert _require_money(value, "cost") is None
+    assert value.as_tuple().exponent == -2
 
 
 @pytest.mark.parametrize("value", [(), [], ["one"]])

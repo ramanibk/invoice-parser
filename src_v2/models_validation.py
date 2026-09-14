@@ -2,6 +2,7 @@
 
 from datetime import date as Date
 from datetime import datetime as DateTime
+from decimal import Decimal
 from typing import TypeVar, cast
 
 from errors import PipelineError
@@ -28,6 +29,31 @@ def _require_date(value: object, field_name: str) -> None:
         raise PipelineError(f"{field_name} must be a date")
 
 
+def _require_money(value: object, field_name: str) -> None:
+    """Require a finite nonnegative Decimal with at most two fractional places."""
+    if not isinstance(value, Decimal):
+        raise PipelineError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise PipelineError(f"{field_name} must be finite")
+    if value < 0:
+        raise PipelineError(f"{field_name} must be nonnegative")
+    if value.as_tuple().exponent < -2:
+        raise PipelineError(f"{field_name} must have at most two fractional places")
+
+
+def _require_tuple_of(
+    value: object,
+    item_type: type[ModelValue],
+    field_name: str,
+) -> tuple[ModelValue, ...]:
+    """Return a tuple after validating every item against one type."""
+    if not isinstance(value, tuple):
+        raise PipelineError(f"{field_name} must be a tuple")
+    if not all(isinstance(item, item_type) for item in value):
+        raise PipelineError(f"{field_name} must contain only {item_type.__name__} values")
+    return cast(tuple[ModelValue, ...], value)
+
+
 def _require_non_empty_tuple_of(
     value: object,
     item_type: type[ModelValue],
@@ -36,6 +62,4 @@ def _require_non_empty_tuple_of(
     """Return a non-empty tuple after validating every item against one type."""
     if not isinstance(value, tuple) or not value:
         raise PipelineError(f"{field_name} must be a non-empty tuple")
-    if not all(isinstance(item, item_type) for item in value):
-        raise PipelineError(f"{field_name} must contain only {item_type.__name__} values")
-    return cast(tuple[ModelValue, ...], value)
+    return _require_tuple_of(value, item_type, field_name)
