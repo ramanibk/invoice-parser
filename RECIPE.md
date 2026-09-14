@@ -25,11 +25,8 @@ AIRTABLE_APPOINTMENTS_TABLE_ID="tbl..."
 AIRTABLE_CATS_TABLE_ID="tbl..."
 ```
 
-Load these values into the current shell:
-
-```bash
-source .env
-```
+Pass this file to `uv run` with `--env-file .env`; it loads the values for the child command without
+requiring the assignments to use shell-specific `export` syntax.
 
 ## 3. Prepare read-only inputs
 
@@ -70,7 +67,7 @@ the same input directory.
 Pass the configured-year date in `MM/DD` form and the input directory:
 
 ```bash
-uv run invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
+uv run --env-file .env invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
 ```
 
 Interactive review is the default. At this stage it checks that terminal input and the macOS PDF
@@ -78,7 +75,7 @@ viewer are available; the numbered extraction stages will use that support to op
 automation or preflight-only testing, disable review readiness explicitly:
 
 ```bash
-uv run invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
+uv run --env-file .env invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
 ```
 
 Successful output includes the validated input counts, planned future run directory, and persistent
@@ -87,7 +84,7 @@ log path. The log is created under `../bac-outputs/logs/`; the planned run direc
 Use overrides when testing outside the normal project layout:
 
 ```bash
-uv run invoice-pipeline \
+uv run --env-file .env invoice-pipeline \
   --date 09/03 \
   --no-review \
   --outputs-dir /tmp/invoice-pipeline-outputs \
