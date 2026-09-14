@@ -6,9 +6,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from errors import PipelineError
+from invoice_extraction import parse_invoice
+from models_invoice import Invoice
 from pipeline_config import PipelineConfig, build_pipeline_config
+from pipeline_logging import append_pipeline_log
 from preflight import PreflightResult, run_preflight
 from resolve_run_identity import resolve_run_date
+from review import review_pdf
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -18,10 +22,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = _build_config(arguments)
         _print_start(config)
         result = run_preflight(config)
+        _print_preflight_result(result)
+        invoice = _run_invoice_extraction(result)
     except PipelineError as exc:
         print(f"invoice-pipeline: error: {exc}", file=sys.stderr)
         return 1
-    _print_preflight_result(result)
+    _print_invoice_result(invoice, config.review_enabled)
     return 0
 
 
@@ -47,7 +53,7 @@ def _print_start(config: PipelineConfig) -> None:
 
 
 def _print_preflight_result(result: PreflightResult) -> None:
-    """Print validated input counts and the safe stopping point of this build."""
+    """Print validated input counts and output identities."""
     print("[ok] Manifest validated")
     print(f"[ok] Invoice found: {result.input_files.invoice_path.name}")
     print(f"[ok] {len(result.manifest.entries)} treatment sheet(s) validated")
@@ -57,7 +63,41 @@ def _print_preflight_result(result: PreflightResult) -> None:
     print(f"\nPlanned run directory: {result.output_plan.run_directory}")
     print(f"Log: {result.output_plan.log_path}")
     print("\nPreflight complete.")
-    print("No extraction stages are implemented yet; no run directory was created.")
+
+
+def _run_invoice_extraction(result: PreflightResult) -> Invoice:
+    """Parse, validate, review, and log the first numbered pipeline stage."""
+    invoice = parse_invoice(result.input_files.invoice_path)
+    review_pdf(
+        invoice.source_file,
+        "invoice PDF",
+        review_enabled=result.config.review_enabled,
+    )
+    service_count = sum(len(appointment.services) for appointment in invoice.appointments)
+    append_pipeline_log(
+        result.output_plan,
+        (
+            "Stage 1 invoice extraction passed.",
+            f"Validated {len(invoice.appointments)} invoice appointment(s).",
+            f"Validated {service_count} invoice service line(s).",
+            f"Validated invoice total: USD {invoice.total_cost:.2f}.",
+        ),
+        sensitive_values=(result.config.airtable.token,),
+    )
+    return invoice
+
+
+def _print_invoice_result(invoice: Invoice, review_enabled: bool) -> None:
+    """Print the validated invoice summary and current safe stopping point."""
+    service_count = sum(len(appointment.services) for appointment in invoice.appointments)
+    review_status = "approved" if review_enabled else "skipped"
+    print("\nStage 1: Invoice extraction")
+    print(f"[ok] {len(invoice.appointments)} appointment(s) parsed")
+    print(f"[ok] {service_count} service line(s) parsed")
+    print(f"[ok] Invoice total validated: USD {invoice.total_cost:.2f}")
+    print(f"[ok] Invoice review {review_status}")
+    print("\nStage 1 complete.")
+    print("No run directory was created; later extraction stages are not implemented yet.")
 
 
 def _argument_parser() -> argparse.ArgumentParser:

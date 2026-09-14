@@ -66,9 +66,7 @@ def start_pipeline_log(
     """Create a new log with every supplied sensitive value redacted."""
     if not isinstance(plan, OutputPlan):
         raise PipelineError("pipeline log requires an OutputPlan")
-    entries = _require_non_empty_tuple_of(messages, str, "pipeline log messages")
-    for message in entries:
-        _require_text(message, "pipeline log message")
+    entries = _validated_log_entries(messages)
     sanitized_entries = _redact_sensitive_values(entries, sensitive_values)
     _create_log_parent(plan)
     try:
@@ -80,6 +78,36 @@ def start_pipeline_log(
         _remove_empty_log_directories(plan)
         raise PipelineError(f"could not start pipeline log {plan.log_path}: {exc}") from exc
     return plan.log_path
+
+
+def append_pipeline_log(
+    plan: OutputPlan,
+    messages: tuple[str, ...],
+    *,
+    sensitive_values: tuple[str, ...] = (),
+) -> Path:
+    """Append validated redacted stage messages to an active pipeline log."""
+    if not isinstance(plan, OutputPlan):
+        raise PipelineError("pipeline log append requires an OutputPlan")
+    entries = _validated_log_entries(messages)
+    sanitized_entries = _redact_sensitive_values(entries, sensitive_values)
+    if not plan.log_path.is_file():
+        raise PipelineError("pipeline log must exist before stage messages are appended")
+    try:
+        with plan.log_path.open("a", encoding="utf-8") as log_file:
+            for message in sanitized_entries:
+                log_file.write(f"{message}\n")
+    except OSError as exc:
+        raise PipelineError(f"could not append pipeline log {plan.log_path}: {exc}") from exc
+    return plan.log_path
+
+
+def _validated_log_entries(messages: object) -> tuple[str, ...]:
+    """Return a non-empty tuple after validating every log entry."""
+    entries = _require_non_empty_tuple_of(messages, str, "pipeline log messages")
+    for message in entries:
+        _require_text(message, "pipeline log message")
+    return entries
 
 
 def _redact_sensitive_values(

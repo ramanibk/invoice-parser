@@ -6,7 +6,12 @@ from pathlib import Path
 import pipeline_logging
 import pytest
 from errors import PipelineError
-from pipeline_logging import OutputPlan, plan_output_paths, start_pipeline_log
+from pipeline_logging import (
+    OutputPlan,
+    append_pipeline_log,
+    plan_output_paths,
+    start_pipeline_log,
+)
 
 STARTED_AT = datetime(2026, 9, 13, 14, 30, 5, 123456, tzinfo=timezone.utc)
 
@@ -55,6 +60,30 @@ def test_redacts_sensitive_values_before_writing_log(tmp_path: Path) -> None:
     log_text = plan.log_path.read_text(encoding="utf-8")
     assert log_text == "Unexpected detail contained [REDACTED].\n"
     assert "patSensitiveToken123" not in log_text
+
+
+def test_appends_redacted_stage_messages_to_active_log(tmp_path: Path) -> None:
+    """Preserve preflight entries while adding privacy-safe stage results."""
+    plan = plan_output_paths(tmp_path / "outputs", date(2026, 9, 3), started_at=STARTED_AT)
+    start_pipeline_log(plan, ("Preflight passed.",))
+
+    append_pipeline_log(
+        plan,
+        ("Stage used patSensitiveToken123.",),
+        sensitive_values=("patSensitiveToken123",),
+    )
+
+    assert plan.log_path.read_text(encoding="utf-8") == (
+        "Preflight passed.\nStage used [REDACTED].\n"
+    )
+
+
+def test_rejects_append_without_active_log(tmp_path: Path) -> None:
+    """Require preflight to start the persistent log before any stage appends."""
+    plan = plan_output_paths(tmp_path / "outputs", date(2026, 9, 3), started_at=STARTED_AT)
+
+    with pytest.raises(PipelineError, match="must exist"):
+        append_pipeline_log(plan, ("Stage passed.",))
 
 
 def test_numbers_colliding_log_without_changing_extension(tmp_path: Path) -> None:

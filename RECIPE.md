@@ -1,9 +1,10 @@
 # Invoice pipeline recipe
 
 This is the living runbook for the rewritten invoice pipeline. The `invoice-pipeline` command
-currently performs preflight only: it validates all source identities and runtime prerequisites,
-plans the future output location, and starts a persistent log. It does not yet parse PDF contents,
-query Airtable, create a run directory, or publish extraction artifacts.
+performs preflight and Stage 1 invoice extraction: it validates all source identities and runtime
+prerequisites, plans the future output location, starts a persistent log, parses the invoice PDF,
+and validates every printed monetary total. It does not yet parse treatment sheets, query Airtable,
+create a run directory, or publish extraction artifacts.
 
 ## 1. Install the project
 
@@ -65,7 +66,7 @@ may also be present as a complete set; its counts must match the inputs and `fai
 }
 ```
 
-## 4. Run preflight
+## 4. Run preflight and invoice extraction
 
 Pass the configured-year date in `MM/DD` form and the input directory:
 
@@ -73,9 +74,10 @@ Pass the configured-year date in `MM/DD` form and the input directory:
 uv run --env-file .env invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
 ```
 
-Interactive review is the default. At this stage it checks that terminal input and the macOS PDF
-viewer are available; the numbered extraction stages will use that support to open PDFs later. For
-automation or preflight-only testing, disable review readiness explicitly:
+Interactive review is the default. Preflight checks that terminal input and the macOS PDF viewer
+are available. After Stage 1 parses the invoice and validates its service, appointment, and invoice
+totals with exact decimal arithmetic, the command opens the source PDF and requires explicit
+approval. For automation or noninteractive testing, disable review explicitly:
 
 ```bash
 uv run --env-file .env invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
@@ -119,8 +121,21 @@ Planned run directory: /path/to/bac-outputs/26SEP03-NLF
 Log: /path/to/bac-outputs/logs/TIMESTAMP-26SEP03-NLF.log
 
 Preflight complete.
-No extraction stages are implemented yet; no run directory was created.
+
+Stage 1: Invoice extraction
+[ok] 2 appointment(s) parsed
+[ok] 5 service line(s) parsed
+[ok] Invoice total validated: USD 250.00
+[ok] Invoice review approved
+
+Stage 1 complete.
+No run directory was created; later extraction stages are not implemented yet.
 ```
+
+Stage 1 preserves invoice appointment identity and service descriptions for later matching. It
+rejects unreadable PDFs, malformed appointment rows, non-numeric service prices, missing or
+inconsistent totals, service sums that differ from their appointment total, and appointment totals
+that differ from the invoice total. The service catalog is not applied until a later stage.
 
 ## 5. Verify repository changes
 
