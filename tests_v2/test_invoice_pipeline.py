@@ -57,7 +57,10 @@ def _parsed_invoice(path: Path) -> Invoice:
     service = InvoiceServiceLine("Cat Spay", Decimal("125.00"))
     appointment = InvoiceAppointment(
         date(2026, 9, 3),
-        "Sample Cat, Sample Owner",
+        "(F) Sample Cat",
+        "26-7001",
+        "Sample Owner",
+        "(F) Sample Cat (26-7001) Sample Owner",
         (service,),
         Decimal("125.00"),
     )
@@ -98,7 +101,7 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     monkeypatch.setattr(
         invoice_pipeline, "extract_treatment_sheets", lambda _manifest: _parsed_records()
     )
-    monkeypatch.setattr(invoice_pipeline, "review_pdf", record_review)
+    monkeypatch.setattr(invoice_pipeline, "review_extraction", record_review)
 
     status = main(
         [
@@ -122,6 +125,8 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Stage 2: Treatment-sheet extraction" in captured.out
     assert "1 treatment sheet(s) parsed and identity-checked" in captured.out
     assert "later pipeline stages are not implemented yet" in captured.out
+    assert '"source_file"' not in captured.out
+    assert '"medical_findings"' not in captured.out
     assert captured.err == ""
     assert not (output_dir / "26SEP03-NLF").exists()
     log_paths = tuple((output_dir / "logs").glob("*.log"))
@@ -133,12 +138,58 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Stage 1 invoice extraction passed." in log_text
     assert "Stage 2 treatment-sheet extraction passed." in log_text
     assert review_calls == [
-        (input_dir / "clinic-invoice.pdf", "invoice PDF", False),
+        (input_dir / "clinic-invoice.pdf", "invoice", False),
         (
             input_dir / "sample-cat.pdf",
             "treatment sheet sample-cat.pdf",
             False,
         ),
+    ]
+
+
+def test_review_prints_each_extraction_before_opening_its_pdf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Print invoice and sheet values before handing each source to review."""
+    input_dir = tmp_path / "inputs"
+    output_dir = tmp_path / "outputs"
+    _write_run_inputs(input_dir)
+    _set_airtable_environment(monkeypatch)
+    events = []
+    monkeypatch.setattr(preflight, "validate_runtime_readiness", lambda _config: None)
+    monkeypatch.setattr(invoice_pipeline, "parse_invoice", _parsed_invoice)
+    monkeypatch.setattr(
+        invoice_pipeline, "extract_treatment_sheets", lambda _manifest: _parsed_records()
+    )
+    monkeypatch.setattr(
+        invoice_pipeline,
+        "print_invoice_extraction",
+        lambda _invoice: events.append("print invoice"),
+    )
+    monkeypatch.setattr(
+        invoice_pipeline,
+        "print_treatment_sheet_extraction",
+        lambda _record, _path: events.append("print treatment sheet"),
+    )
+    monkeypatch.setattr(
+        invoice_pipeline,
+        "review_extraction",
+        lambda _path, description, *, review_enabled: events.append(
+            f"review {description} {review_enabled}"
+        ),
+    )
+
+    status = main(["--date", "09/03", "--outputs-dir", str(output_dir), str(input_dir)])
+
+    assert status == 0
+    assert capsys.readouterr().err == ""
+    assert events == [
+        "print invoice",
+        "review invoice True",
+        "print treatment sheet",
+        "review treatment sheet sample-cat.pdf True",
     ]
 
 
@@ -160,7 +211,7 @@ def test_cli_reports_invoice_failure_without_partial_run_output(
     monkeypatch.setattr(invoice_pipeline, "parse_invoice", fail_parse)
     monkeypatch.setattr(
         invoice_pipeline,
-        "review_pdf",
+        "review_extraction",
         lambda *_args, **_kwargs: pytest.fail("invalid invoices must not reach review"),
     )
 
@@ -195,7 +246,7 @@ def test_cli_reports_treatment_sheet_failure_without_partial_run_output(
     monkeypatch.setattr(invoice_pipeline, "parse_invoice", _parsed_invoice)
     monkeypatch.setattr(
         invoice_pipeline,
-        "review_pdf",
+        "review_extraction",
         lambda path, description, *, review_enabled: review_calls.append(
             (path, description, review_enabled)
         ),
@@ -222,7 +273,7 @@ def test_cli_reports_treatment_sheet_failure_without_partial_run_output(
     assert status == 1
     assert "Stage 1 complete." in captured.out
     assert "sample-cat.pdf: owner mismatch" in captured.err
-    assert review_calls == [(input_dir / "clinic-invoice.pdf", "invoice PDF", False)]
+    assert review_calls == [(input_dir / "clinic-invoice.pdf", "invoice", False)]
     assert not (output_dir / "26SEP03-NLF").exists()
 
 

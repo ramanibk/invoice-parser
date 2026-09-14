@@ -20,7 +20,10 @@ def _appointment(**changes: object) -> InvoiceAppointment:
     """Build a valid invoice appointment with selected test overrides."""
     values = {
         "service_date": date(2026, 8, 24),
-        "identity_text": "Nebula Delgado, Alexa Camorlinga",
+        "animal_display_name": "(F) Nebula Delgado",
+        "animal_reference": "26-7001",
+        "owner_name": "Camorlinga, Alexa",
+        "identity_text": "(F) Nebula Delgado (26-7001) Camorlinga, Alexa",
         "services": (_service(),),
         "total_cost": Decimal("125.00"),
     }
@@ -63,7 +66,10 @@ def test_invoice_appointment_preserves_ordered_services_and_total() -> None:
     appointment = _appointment(services=services, total_cost=Decimal("135.00"))
 
     assert appointment.services == services
-    assert appointment.identity_text == "Nebula Delgado, Alexa Camorlinga"
+    assert appointment.animal_display_name == "(F) Nebula Delgado"
+    assert appointment.animal_reference == "26-7001"
+    assert appointment.owner_name == "Camorlinga, Alexa"
+    assert appointment.identity_text == "(F) Nebula Delgado (26-7001) Camorlinga, Alexa"
     assert appointment.total_cost == Decimal("135.00")
 
 
@@ -72,6 +78,9 @@ def test_invoice_appointment_preserves_ordered_services_and_total() -> None:
     [
         ({"service_date": "2026-08-24"}, "service date must be a date"),
         ({"service_date": datetime(2026, 8, 24)}, "service date must be a date"),
+        ({"animal_display_name": ""}, "animal display name must be non-empty"),
+        ({"animal_reference": "7001"}, "reference must use NN-N format"),
+        ({"owner_name": ""}, "owner name must be non-empty"),
         ({"identity_text": " "}, "identity must be non-empty"),
         ({"identity_text": None}, "identity must be a string"),
         ({"services": []}, "services must be a non-empty tuple"),

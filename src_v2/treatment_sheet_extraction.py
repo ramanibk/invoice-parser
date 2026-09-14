@@ -18,6 +18,7 @@ from models_treatment_sheet import (
 from pdfminer.pdfparser import PDFSyntaxError
 from preflight import RunManifest
 from resolve_run_identity import make_cat_id
+from text_normalization import normalize_wrapped_text
 
 PATIENT_BOX_LEFT = 340
 OWNER_BOX_LEFT = 185
@@ -100,7 +101,7 @@ def _appointments(pages: list[Any]) -> tuple[TreatmentSheetAppointment, ...]:
 
 def _appointment(service_date: Date, pages: list[Any]) -> TreatmentSheetAppointment:
     """Parse one appointment header and its complete preserved medical findings."""
-    text = pages[0].extract_text() or ""
+    text = normalize_wrapped_text(pages[0].extract_text() or "")
     return TreatmentSheetAppointment(
         service_date=service_date,
         gender=_required_group(text, r"\b(Female|Male|Unknown)\s+Cat\b", "gender"),
@@ -225,8 +226,8 @@ def _table_value(table: list[list[str | None]], row_index: int) -> str:
 
 
 def _box_text(page: Any, box: tuple[int, int, float, int]) -> str:
-    """Extract trimmed text from one rectangular PDF region."""
-    return (page.crop(box).extract_text() or "").strip()
+    """Extract and normalize scalar text from one rectangular PDF region."""
+    return normalize_wrapped_text(page.crop(box).extract_text() or "")
 
 
 def _cat_name(pages: list[Any]) -> str:
@@ -264,6 +265,7 @@ def _optional_group(text: str, pattern: str, field_name: str) -> str | None:
 
 def _service_date(text: str) -> Date | None:
     """Parse a present service-date label and ignore continuation pages."""
+    text = normalize_wrapped_text(text)
     match = re.search(r"Service\s+Date:\s*(\d{1,2}/\d{1,2}/\d{4})", text)
     if match is None:
         return None

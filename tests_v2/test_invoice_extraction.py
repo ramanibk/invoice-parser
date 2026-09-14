@@ -9,12 +9,53 @@ import invoice_extraction
 import pytest
 from errors import PipelineError
 from invoice_extraction import (
+    ExtractedInvoiceIdentity,
+    _page_identities,
+    _parse_animal_cell,
     _parse_appointment,
     _parse_appointments,
     _parse_invoice_total,
     parse_invoice,
 )
 from models_invoice import Invoice
+
+
+class FakeCrop:
+    """Return configured text from an invoice coordinate crop."""
+
+    def __init__(self, text: str) -> None:
+        """Store the crop text."""
+        self.text = text
+
+    def extract_text(self) -> str:
+        """Return the configured crop text."""
+        return self.text
+
+
+class FakeIdentityPage:
+    """Provide header coordinates and wrapped identity cells for row tests."""
+
+    height = 300.0
+
+    def extract_words(self) -> list[dict[str, object]]:
+        """Return one header and two date-led appointment rows."""
+        return [
+            {"text": "Animal", "top": 50.0, "x0": 100.0},
+            {"text": "Owner", "top": 50.0, "x0": 200.0},
+            {"text": "Species", "top": 50.0, "x0": 300.0},
+            {"text": "9/2/2026", "top": 100.0, "x0": 10.0},
+            {"text": "9/3/2026", "top": 200.0, "x0": 10.0},
+        ]
+
+    def crop(self, box: tuple[float, float, float, float]) -> FakeCrop:
+        """Return the Animal or Owner cell selected by row coordinates."""
+        left, top, _right, _bottom = box
+        first_row = top < 150
+        if left < 200:
+            text = "(F) Jelly Bean (26-\n7465)" if first_row else "(F) Molly (26-7466)"
+        else:
+            text = "Castillo,\nKate" if first_row else "Smith, Alex"
+        return FakeCrop(text)
 
 
 def _invoice_text() -> str:
@@ -32,6 +73,22 @@ Total of this appointment: $10.00
 Total of this invoice: $335.00"""
 
 
+def _identity(
+    *,
+    service_date: date = date(2026, 8, 24),
+    animal_name: str = "(F) Summer No Ear Tip!",
+    animal_reference: str = "26-7089",
+    owner_name: str = "Bay Area Cats",
+) -> ExtractedInvoiceIdentity:
+    """Build one structured invoice identity for parser unit tests."""
+    return ExtractedInvoiceIdentity(
+        service_date,
+        animal_name,
+        animal_reference,
+        owner_name,
+    )
+
+
 def test_parse_invoice_returns_typed_exact_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -40,6 +97,19 @@ def test_parse_invoice_returns_typed_exact_values(
     invoice_path = tmp_path / "clinic invoice.pdf"
     invoice_path.write_bytes(b"%PDF-placeholder")
     monkeypatch.setattr(invoice_extraction, "_read_pdf_text", lambda _path: _invoice_text())
+    monkeypatch.setattr(
+        invoice_extraction,
+        "_read_invoice_identities",
+        lambda _path: (
+            _identity(),
+            _identity(
+                service_date=date(2026, 8, 25),
+                animal_name="Bea",
+                animal_reference="26-7090",
+                owner_name="Jones",
+            ),
+        ),
+    )
 
     invoice = parse_invoice(invoice_path)
 
@@ -49,7 +119,12 @@ def test_parse_invoice_returns_typed_exact_values(
         date(2026, 8, 24),
         date(2026, 8, 25),
     ]
-    assert invoice.appointments[0].identity_text == "Summer No Ear Tip! Bay Area Cats"
+    assert invoice.appointments[0].animal_display_name == "(F) Summer No Ear Tip!"
+    assert invoice.appointments[0].animal_reference == "26-7089"
+    assert invoice.appointments[0].owner_name == "Bay Area Cats"
+    assert invoice.appointments[0].identity_text == (
+        "(F) Summer No Ear Tip! (26-7089) Bay Area Cats"
+    )
     assert invoice.appointments[0].services[2].name == ("Pregnant Surcharge w/LRS Administered")
     assert invoice.appointments[0].services[2].cost == Decimal("60.00")
     assert invoice.total_cost == Decimal("335.00")
@@ -82,10 +157,47 @@ def test_collects_appointments_only_from_line_anchored_dates() -> None:
 Total of this appointment: $10.00
 Total of this invoice: $10.00"""
 
-    appointments = _parse_appointments(text)
+    appointments = _parse_appointments(text, (_identity(),))
 
     assert len(appointments) == 1
     assert appointments[0].service_date == date(2026, 8, 24)
+
+
+def test_separates_wrapped_animal_name_and_reference() -> None:
+    """Separate a reconnected animal reference from its display name."""
+    assert _parse_animal_cell("(F) Jelly Bean (26-7465)") == (
+        "(F) Jelly Bean",
+        "26-7465",
+    )
+
+
+def test_extracts_wrapped_identity_columns_by_visual_row() -> None:
+    """Keep Animal and Owner cells separate while normalizing their line wraps."""
+    identities = _page_identities(FakeIdentityPage())
+
+    assert identities == (
+        ExtractedInvoiceIdentity(
+            date(2026, 9, 2),
+            "(F) Jelly Bean",
+            "26-7465",
+            "Castillo, Kate",
+        ),
+        ExtractedInvoiceIdentity(
+            date(2026, 9, 3),
+            "(F) Molly",
+            "26-7466",
+            "Smith, Alex",
+        ),
+    )
+
+
+def test_rejects_text_and_identity_row_count_mismatch() -> None:
+    """Reject a structured identity batch that cannot align one-to-one with text rows."""
+    text = """8/24/2026 Ada Smith Cat 8.00 Female Cat Spay $125.00
+Total of this appointment: $125.00"""
+
+    with pytest.raises(PipelineError, match="rows and structured identities must align"):
+        _parse_appointments(text, ())
 
 
 def test_rejects_service_sum_mismatch() -> None:
@@ -94,7 +206,7 @@ def test_rejects_service_sum_mismatch() -> None:
 Total of this appointment: $130.00"""
 
     with pytest.raises(PipelineError, match="service costs do not match"):
-        _parse_appointment(block)
+        _parse_appointment(block, _identity())
 
 
 def test_rejects_invoice_total_mismatch() -> None:
@@ -103,7 +215,7 @@ def test_rejects_invoice_total_mismatch() -> None:
 Total of this appointment: $125.00
 Total of this invoice: $130.00"""
 
-    appointments = _parse_appointments(text)
+    appointments = _parse_appointments(text, (_identity(),))
     total = _parse_invoice_total(text)
 
     with pytest.raises(PipelineError, match="appointment totals do not match"):
@@ -124,7 +236,7 @@ def test_rejects_non_numeric_service_cost() -> None:
 Total of this appointment: $0.00"""
 
     with pytest.raises(PipelineError, match="invoice service cost is invalid"):
-        _parse_appointment(block)
+        _parse_appointment(block, _identity())
 
 
 def test_rejects_invalid_appointment_date() -> None:
@@ -133,13 +245,13 @@ def test_rejects_invalid_appointment_date() -> None:
 Total of this appointment: $125.00"""
 
     with pytest.raises(PipelineError, match="appointment date is invalid"):
-        _parse_appointment(block)
+        _parse_appointment(block, _identity())
 
 
 def test_rejects_missing_appointments() -> None:
     """Reject extracted invoice text without a date-led visit block."""
     with pytest.raises(PipelineError, match="invoice contains no appointments"):
-        _parse_appointments("Total of this invoice: $0.00")
+        _parse_appointments("Total of this invoice: $0.00", ())
 
 
 def test_rejects_missing_or_unresolved_source_path(tmp_path: Path) -> None:

@@ -7,15 +7,15 @@ from errors import PipelineError
 from models_validation import _require_text
 
 
-def review_pdf(pdf_path: Path, description: str, *, review_enabled: bool = True) -> None:
-    """Open one PDF and require explicit approval unless review is disabled."""
+def review_extraction(pdf_path: Path, description: str, *, review_enabled: bool = True) -> None:
+    """Open one source PDF and require approval of its printed extraction."""
     if not isinstance(review_enabled, bool):
         raise PipelineError("review enabled must be a boolean")
     if not review_enabled:
         return
     _validate_review_input(pdf_path, description)
     _open_pdf(pdf_path, description)
-    _confirm_pdf(description)
+    _confirm_extraction(description)
 
 
 def _validate_review_input(pdf_path: object, description: object) -> None:
@@ -40,11 +40,11 @@ def _open_pdf(pdf_path: Path, description: str) -> None:
         )
 
 
-def _confirm_pdf(description: str) -> None:
-    """Require a positive terminal response after the operator inspects a PDF."""
+def _confirm_extraction(description: str) -> None:
+    """Require approval after the operator compares printed data with its PDF."""
     try:
-        response = input(f"Approve {description}? [y/N] ")
+        response = input(f"Approve {description} extraction? [y/N] ")
     except (EOFError, OSError) as exc:
-        raise PipelineError(f"could not confirm {description} review") from exc
+        raise PipelineError(f"could not confirm {description} extraction review") from exc
     if response.strip().casefold() not in {"y", "yes"}:
-        raise PipelineError(f"{description} review was not approved")
+        raise PipelineError(f"{description} extraction was not approved")

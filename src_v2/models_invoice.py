@@ -1,5 +1,6 @@
 """Represent validated invoice values with exact monetary amounts."""
 
+import re
 from dataclasses import dataclass
 from datetime import date as Date
 from decimal import Decimal
@@ -14,6 +15,7 @@ from models_validation import (
 )
 
 SUPPORTED_CURRENCY = "USD"
+ANIMAL_REFERENCE_PATTERN = re.compile(r"\d{2}-\d+")
 
 
 @dataclass(frozen=True)
@@ -34,13 +36,21 @@ class InvoiceAppointment:
     """Store one dated invoice visit and its ordered service lines."""
 
     service_date: Date
+    animal_display_name: str
+    animal_reference: str
+    owner_name: str
     identity_text: str
     services: tuple[InvoiceServiceLine, ...]
     total_cost: Decimal
 
     def __post_init__(self) -> None:
-        """Validate the visit identity, service collection, and printed total."""
+        """Validate the visit identities, service collection, and printed total."""
         _require_date(self.service_date, "invoice appointment service date")
+        _require_text(self.animal_display_name, "invoice animal display name")
+        _require_text(self.animal_reference, "invoice animal reference")
+        if ANIMAL_REFERENCE_PATTERN.fullmatch(self.animal_reference) is None:
+            raise PipelineError("invoice animal reference must use NN-N format")
+        _require_text(self.owner_name, "invoice owner name")
         _require_text(self.identity_text, "invoice appointment identity")
         _require_non_empty_tuple_of(
             self.services, InvoiceServiceLine, "invoice appointment services"

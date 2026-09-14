@@ -77,9 +77,10 @@ uv run --env-file .env invoice-pipeline --date 09/03 ../bac-invoices/run-inputs
 
 Interactive review is the default. Preflight checks that terminal input and the macOS PDF viewer
 are available. After Stage 1 parses the invoice and validates its service, appointment, and invoice
-totals with exact decimal arithmetic, the command opens the invoice and requires explicit approval.
-Stage 2 then parses and identity-checks every treatment sheet before opening each one for approval.
-For automation or noninteractive testing, disable review explicitly:
+totals with exact decimal arithmetic, the command prints every extracted value, opens the invoice,
+and asks the operator to approve the extraction. Stage 2 then parses and identity-checks every
+treatment sheet before printing each record, opening its source PDF, and asking the operator to
+approve that extraction. For automation or noninteractive testing, disable review explicitly:
 
 ```bash
 uv run --env-file .env invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
@@ -103,7 +104,7 @@ environment. It does not accept secrets or schema IDs as command-line arguments,
 token from remaining in shell history or process listings. Persistent logging also redacts the
 configured token before writing any message.
 
-Example successful result:
+Abbreviated successful result (the detailed JSON printed before each review is omitted here):
 
 ```text
 Invoice pipeline
@@ -128,20 +129,22 @@ Stage 1: Invoice extraction
 [ok] 2 appointment(s) parsed
 [ok] 5 service line(s) parsed
 [ok] Invoice total validated: USD 250.00
-[ok] Invoice review approved
+[ok] Invoice extraction review approved
 
 Stage 1 complete.
 
 Stage 2: Treatment-sheet extraction
 [ok] 2 treatment sheet(s) parsed and identity-checked
 [ok] 2 appointment(s) parsed
-[ok] Treatment-sheet review approved
+[ok] Treatment-sheet extraction review approved
 
 Stage 2 complete.
 No run directory was created; later pipeline stages are not implemented yet.
 ```
 
-Stage 1 preserves invoice appointment identity and service descriptions for later matching. It
+Stage 1 preserves each invoice animal display name, animal reference, owner name, combined identity
+text, and service descriptions for later matching. It uses the PDF's detected Animal, Owner, and
+Species column boundaries so visually wrapped names and references remain in the correct field. It
 rejects unreadable PDFs, malformed appointment rows, non-numeric service prices, missing or
 inconsistent totals, service sums that differ from their appointment total, and appointment totals
 that differ from the invoice total. The service catalog is not applied until a later stage.

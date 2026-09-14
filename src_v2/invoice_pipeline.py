@@ -13,7 +13,8 @@ from pipeline_config import PipelineConfig, build_pipeline_config
 from pipeline_logging import append_pipeline_log
 from preflight import PreflightResult, run_preflight
 from resolve_run_identity import resolve_run_date
-from review import review_pdf
+from review import review_extraction
+from review_output import print_invoice_extraction, print_treatment_sheet_extraction
 from treatment_sheet_extraction import extract_treatment_sheets
 
 
@@ -72,9 +73,11 @@ def _print_preflight_result(result: PreflightResult) -> None:
 def _run_invoice_extraction(result: PreflightResult) -> Invoice:
     """Parse, validate, review, and log the first numbered pipeline stage."""
     invoice = parse_invoice(result.input_files.invoice_path)
-    review_pdf(
+    if result.config.review_enabled:
+        print_invoice_extraction(invoice)
+    review_extraction(
         invoice.source_file,
-        "invoice PDF",
+        "invoice",
         review_enabled=result.config.review_enabled,
     )
     service_count = sum(len(appointment.services) for appointment in invoice.appointments)
@@ -99,15 +102,17 @@ def _print_invoice_result(invoice: Invoice, review_enabled: bool) -> None:
     print(f"[ok] {len(invoice.appointments)} appointment(s) parsed")
     print(f"[ok] {service_count} service line(s) parsed")
     print(f"[ok] Invoice total validated: USD {invoice.total_cost:.2f}")
-    print(f"[ok] Invoice review {review_status}")
+    print(f"[ok] Invoice extraction review {review_status}")
     print("\nStage 1 complete.")
 
 
 def _run_treatment_sheet_extraction(result: PreflightResult) -> tuple[CatRecord, ...]:
     """Parse, validate, review, and log every Stage 2 treatment sheet."""
     records = extract_treatment_sheets(result.manifest)
-    for path in result.manifest.treatment_sheet_paths:
-        review_pdf(
+    for record, path in zip(records, result.manifest.treatment_sheet_paths, strict=True):
+        if result.config.review_enabled:
+            print_treatment_sheet_extraction(record, path)
+        review_extraction(
             path,
             f"treatment sheet {path.name}",
             review_enabled=result.config.review_enabled,
@@ -132,7 +137,7 @@ def _print_treatment_sheet_result(records: tuple[CatRecord, ...], review_enabled
     print("\nStage 2: Treatment-sheet extraction")
     print(f"[ok] {len(records)} treatment sheet(s) parsed and identity-checked")
     print(f"[ok] {appointment_count} appointment(s) parsed")
-    print(f"[ok] Treatment-sheet review {review_status}")
+    print(f"[ok] Treatment-sheet extraction review {review_status}")
     print("\nStage 2 complete.")
     print("No run directory was created; later pipeline stages are not implemented yet.")
 
@@ -148,7 +153,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-review",
         action="store_true",
-        help="Skip interactive review readiness and future PDF review prompts.",
+        help="Skip extracted-value printing, PDF viewing, and interactive approval prompts.",
     )
     parser.add_argument(
         "input_dir",

@@ -10,6 +10,7 @@ from models_treatment_sheet import CatRecord, ManifestEntry, MedicalFindings
 from preflight import RunManifest
 from treatment_sheet_extraction import (
     _appointments,
+    _box_text,
     _color,
     _service_date,
     _validate_identity,
@@ -47,6 +48,10 @@ class FakePage:
     def find_tables(self) -> list[FakeTable]:
         """Return configured ruled tables."""
         return self.tables
+
+    def crop(self, _box: object) -> "FakePage":
+        """Return this page for scalar crop-normalization tests."""
+        return self
 
 
 def _bottom_table(communication: str) -> list[list[str | None]]:
@@ -137,6 +142,13 @@ def test_preserves_optional_header_values() -> None:
     assert _color("Color: / Type: Shelter") is None
     assert _weight("Weight: 6.80 lbs") == "6.80 lbs"
     assert _weight("Weight: lbs") is None
+
+
+def test_normalizes_wrapped_treatment_sheet_header_field() -> None:
+    """Collapse visual wrapping in cropped identity fields without altering medical text."""
+    page = FakePage("(F) Jelly Bean (26-\n7465)", [])
+
+    assert _box_text(page, (0, 0, 100, 100)) == "(F) Jelly Bean (26-7465)"
 
 
 @pytest.mark.parametrize(

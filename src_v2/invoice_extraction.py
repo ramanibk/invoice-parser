@@ -1,19 +1,24 @@
 """Parse and validate invoice PDFs without creating pipeline output artifacts."""
 
 import re
+from dataclasses import dataclass
 from datetime import date as Date
 from datetime import datetime as DateTime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 import pdfplumber
 from errors import PipelineError
 from models_invoice import Invoice, InvoiceAppointment, InvoiceServiceLine
 from pdfminer.pdfparser import PDFSyntaxError
+from text_normalization import normalize_wrapped_text
 
 MONEY_PATTERN = r"\$([\d,]+(?:\.\d{1,2})?)"
 SERVICE_COST_PATTERN = r"\$([^\s]+)"
 APPOINTMENT_START_PATTERN = re.compile(r"(?m)^(\d{1,2}/\d{1,2}/\d{4})\s+")
+VISIT_DATE_PATTERN = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
+ANIMAL_CELL_PATTERN = re.compile(r"(?P<name>.+?)\s+\((?P<reference>\d{2}-\d+)\)")
 SUMMARY_PREFIXES = (
     "total of this appointment:",
     "total of this invoice:",
@@ -23,11 +28,28 @@ SUMMARY_PREFIXES = (
 )
 
 
+@dataclass(frozen=True)
+class ExtractedInvoiceIdentity:
+    """Store normalized identity columns extracted from one visual invoice row."""
+
+    service_date: Date
+    animal_display_name: str
+    animal_reference: str
+    owner_name: str
+
+    @property
+    def identity_text(self) -> str:
+        """Return one comparison-friendly rendering of both source identity cells."""
+        animal = f"{self.animal_display_name} ({self.animal_reference})"
+        return f"{animal} {self.owner_name}"
+
+
 def parse_invoice(invoice_path: Path) -> Invoice:
     """Read one absolute invoice PDF and return fully validated typed values."""
     _validate_invoice_path(invoice_path)
     text = _read_pdf_text(invoice_path)
-    appointments = _parse_appointments(text)
+    identities = _read_invoice_identities(invoice_path)
+    appointments = _parse_appointments(text, identities)
     total_cost = _parse_invoice_total(text)
     _validate_invoice_total(appointments, total_cost)
     return Invoice(invoice_path, appointments, total_cost)
@@ -53,11 +75,117 @@ def _read_pdf_text(invoice_path: Path) -> str:
     return text
 
 
-def _parse_appointments(text: str) -> tuple[InvoiceAppointment, ...]:
+def _read_invoice_identities(invoice_path: Path) -> tuple[ExtractedInvoiceIdentity, ...]:
+    """Extract normalized Animal and Owner cells from all invoice table pages."""
+    try:
+        with pdfplumber.open(invoice_path) as pdf:
+            identities = tuple(
+                identity for page in pdf.pages for identity in _page_identities(page)
+            )
+    except PipelineError:
+        raise
+    except (OSError, PDFSyntaxError, ValueError, IndexError) as exc:
+        raise PipelineError(f"could not read invoice identities {invoice_path}: {exc}") from exc
+    if not identities:
+        raise PipelineError("invoice contains no structured appointment identities")
+    return identities
+
+
+def _page_identities(page: Any) -> tuple[ExtractedInvoiceIdentity, ...]:
+    """Extract appointment identities from dynamically detected page columns."""
+    words = page.extract_words()
+    if not any(VISIT_DATE_PATTERN.fullmatch(str(word.get("text", ""))) for word in words):
+        return ()
+    header_top, animal_left, owner_left, species_left = _identity_column_boundaries(words)
+    visits = _visit_rows(words, header_top, animal_left)
+    return tuple(
+        _cropped_identity(page, visits, index, animal_left, owner_left, species_left)
+        for index in range(len(visits))
+    )
+
+
+def _identity_column_boundaries(
+    words: list[dict[str, Any]],
+) -> tuple[float, float, float, float]:
+    """Find Animal, Owner, and Species column starts on one header row."""
+    for animal in (word for word in words if word.get("text") == "Animal"):
+        same_line = [word for word in words if abs(word["top"] - animal["top"]) < 1]
+        owner = _word_named(same_line, "Owner")
+        species = _word_named(same_line, "Species")
+        if owner is not None and species is not None:
+            return animal["top"], animal["x0"], owner["x0"], species["x0"]
+    raise PipelineError("invoice identity column headers were not found")
+
+
+def _word_named(words: list[dict[str, Any]], text: str) -> dict[str, Any] | None:
+    """Return the first extracted word with an exact requested value."""
+    return next((word for word in words if word.get("text") == text), None)
+
+
+def _visit_rows(
+    words: list[dict[str, Any]],
+    header_top: float,
+    animal_left: float,
+) -> tuple[tuple[Date, float], ...]:
+    """Return ordered visit dates and vertical starts below the table header."""
+    visits = (
+        (_parse_date(word["text"]), word["top"])
+        for word in words
+        if word["top"] > header_top
+        and word["x0"] < animal_left
+        and VISIT_DATE_PATTERN.fullmatch(word["text"])
+    )
+    return tuple(sorted(visits, key=lambda item: item[1]))
+
+
+def _cropped_identity(
+    page: Any,
+    visits: tuple[tuple[Date, float], ...],
+    index: int,
+    animal_left: float,
+    owner_left: float,
+    species_left: float,
+) -> ExtractedInvoiceIdentity:
+    """Crop and parse one visual invoice row's Animal and Owner cells."""
+    service_date, top = visits[index]
+    bottom = visits[index + 1][1] if index + 1 < len(visits) else page.height
+    animal_cell = _crop_text(page, animal_left, top - 1, owner_left - 1, bottom - 1)
+    owner_name = _crop_text(page, owner_left, top - 1, species_left - 1, bottom - 1)
+    animal_name, animal_reference = _parse_animal_cell(animal_cell)
+    if not owner_name:
+        raise PipelineError("invoice owner cell is blank")
+    return ExtractedInvoiceIdentity(
+        service_date,
+        animal_name,
+        animal_reference,
+        owner_name,
+    )
+
+
+def _crop_text(page: Any, left: float, top: float, right: float, bottom: float) -> str:
+    """Return normalized text from one coordinate-bounded invoice cell."""
+    return normalize_wrapped_text(page.crop((left, top, right, bottom)).extract_text() or "")
+
+
+def _parse_animal_cell(value: str) -> tuple[str, str]:
+    """Separate a required trailing animal reference from its display name."""
+    match = ANIMAL_CELL_PATTERN.fullmatch(value)
+    if match is None:
+        raise PipelineError(f"invoice animal cell is malformed: {value!r}")
+    return match.group("name"), match.group("reference")
+
+
+def _parse_appointments(
+    text: str,
+    identities: tuple[ExtractedInvoiceIdentity, ...],
+) -> tuple[InvoiceAppointment, ...]:
     """Parse every line-anchored appointment block in invoice order."""
     starts = tuple(APPOINTMENT_START_PATTERN.finditer(text))
+    if len(starts) != len(identities):
+        raise PipelineError("invoice appointment rows and structured identities must align")
     appointments = tuple(
-        _parse_appointment(_appointment_block(text, starts, index)) for index in range(len(starts))
+        _parse_appointment(_appointment_block(text, starts, index), identities[index])
+        for index in range(len(starts))
     )
     if not appointments:
         raise PipelineError("invoice contains no appointments")
@@ -74,7 +202,7 @@ def _appointment_block(
     return text[starts[index].start() : end]
 
 
-def _parse_appointment(block: str) -> InvoiceAppointment:
+def _parse_appointment(block: str, identity: ExtractedInvoiceIdentity) -> InvoiceAppointment:
     """Parse one visit and require its service costs to match its total."""
     header = re.search(
         rf"^(?P<date>\d{{1,2}}/\d{{1,2}}/\d{{4}})\s+"
@@ -88,11 +216,16 @@ def _parse_appointment(block: str) -> InvoiceAppointment:
     services = [_service_line(header.group("service"), header.group(4))]
     services.extend(_remaining_service_lines(block[header.end() :]))
     total_cost = _parse_appointment_total(block)
-    identity = _single_line(header.group("identity"))
-    _validate_appointment_total(services, total_cost, identity)
+    service_date = _parse_date(header.group("date"))
+    if service_date != identity.service_date:
+        raise PipelineError("invoice text date does not match its structured identity row")
+    _validate_appointment_total(services, total_cost, identity.identity_text)
     return InvoiceAppointment(
-        service_date=_parse_date(header.group("date")),
-        identity_text=identity,
+        service_date=service_date,
+        animal_display_name=identity.animal_display_name,
+        animal_reference=identity.animal_reference,
+        owner_name=identity.owner_name,
+        identity_text=identity.identity_text,
         services=tuple(services),
         total_cost=total_cost,
     )
@@ -200,4 +333,4 @@ def _parse_date(value: str) -> Date:
 
 def _single_line(value: str) -> str:
     """Collapse PDF line breaks and whitespace runs into one trimmed line."""
-    return " ".join(value.split())
+    return normalize_wrapped_text(value)
