@@ -16,6 +16,8 @@ from text_normalization import normalize_wrapped_text
 
 MONEY_PATTERN = r"\$([\d,]+(?:\.\d{1,2})?)"
 SERVICE_COST_PATTERN = r"\$([^\s]+)"
+# Appointment starts are line-anchored so dates inside service descriptions or
+# invoice summaries cannot accidentally create new visit blocks.
 APPOINTMENT_START_PATTERN = re.compile(r"(?m)^(\d{1,2}/\d{1,2}/\d{4})\s+")
 VISIT_DATE_PATTERN = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
 ANIMAL_CELL_PATTERN = re.compile(r"(?P<name>.+?)\s+\((?P<reference>\d{2}-\d+)\)")
@@ -47,6 +49,8 @@ class ExtractedInvoiceIdentity:
 def parse_invoice(invoice_path: Path) -> Invoice:
     """Read one absolute invoice PDF and return fully validated typed values."""
     _validate_invoice_path(invoice_path)
+    # Plain text is best for service rows and totals, while word coordinates are
+    # required to keep visually wrapped Animal and Owner columns separate.
     text = _read_pdf_text(invoice_path)
     identities = _read_invoice_identities(invoice_path)
     appointments = _parse_appointments(text, identities)
@@ -79,6 +83,7 @@ def _read_invoice_identities(invoice_path: Path) -> tuple[ExtractedInvoiceIdenti
     """Extract normalized Animal and Owner cells from all invoice table pages."""
     try:
         with pdfplumber.open(invoice_path) as pdf:
+            # Flatten page results without losing their original invoice order.
             identities = tuple(
                 identity for page in pdf.pages for identity in _page_identities(page)
             )
@@ -94,6 +99,7 @@ def _read_invoice_identities(invoice_path: Path) -> tuple[ExtractedInvoiceIdenti
 def _page_identities(page: Any) -> tuple[ExtractedInvoiceIdentity, ...]:
     """Extract appointment identities from dynamically detected page columns."""
     words = page.extract_words()
+    # Summary-only pages have no dated rows and need no table-header parsing.
     if not any(VISIT_DATE_PATTERN.fullmatch(str(word.get("text", ""))) for word in words):
         return ()
     header_top, animal_left, owner_left, species_left = _identity_column_boundaries(words)
@@ -109,6 +115,8 @@ def _identity_column_boundaries(
 ) -> tuple[float, float, float, float]:
     """Find Animal, Owner, and Species column starts on one header row."""
     for animal in (word for word in words if word.get("text") == "Animal"):
+        # A one-point tolerance groups words from the same rendered header line
+        # while avoiding unrelated labels elsewhere on the page.
         same_line = [word for word in words if abs(word["top"] - animal["top"]) < 1]
         owner = _word_named(same_line, "Owner")
         species = _word_named(same_line, "Species")
@@ -128,6 +136,8 @@ def _visit_rows(
     animal_left: float,
 ) -> tuple[tuple[Date, float], ...]:
     """Return ordered visit dates and vertical starts below the table header."""
+    # Dates must appear left of the Animal column and below its header; this
+    # excludes dates embedded in identity, service, or footer text.
     visits = (
         (_parse_date(word["text"]), word["top"])
         for word in words
@@ -148,6 +158,8 @@ def _cropped_identity(
 ) -> ExtractedInvoiceIdentity:
     """Crop and parse one visual invoice row's Animal and Owner cells."""
     service_date, top = visits[index]
+    # The following visit bounds the current row. The last row extends to the
+    # page bottom because wrapped identity cells may occupy several visual lines.
     bottom = visits[index + 1][1] if index + 1 < len(visits) else page.height
     animal_cell = _crop_text(page, animal_left, top - 1, owner_left - 1, bottom - 1)
     owner_name = _crop_text(page, owner_left, top - 1, species_left - 1, bottom - 1)
@@ -181,6 +193,8 @@ def _parse_appointments(
 ) -> tuple[InvoiceAppointment, ...]:
     """Parse every line-anchored appointment block in invoice order."""
     starts = tuple(APPOINTMENT_START_PATTERN.finditer(text))
+    # Text blocks and coordinate-derived rows are independent readings of the
+    # same invoice; equal counts are required before pairing by source order.
     if len(starts) != len(identities):
         raise PipelineError("invoice appointment rows and structured identities must align")
     appointments = tuple(
@@ -241,6 +255,8 @@ def _remaining_service_lines(text: str) -> list[InvoiceServiceLine]:
             current = _service_line(match.group(1), match.group(2))
             results.append(current)
         elif current is not None and _is_description_continuation(line):
+            # PDF extraction can wrap a long service description after its priced
+            # row. Replace the prior immutable value with the completed name.
             current = InvoiceServiceLine(
                 f"{current.name} {_single_line(line)}",
                 current.cost,
@@ -282,6 +298,8 @@ def _parse_appointment_total(block: str) -> Decimal:
 
 def _parse_invoice_total(text: str) -> Decimal:
     """Collapse equal repeated page totals into one exact invoice total."""
+    # Multi-page PDFs may print the same invoice total on every page. A set
+    # accepts repetition but rejects missing or conflicting totals.
     values = {
         _parse_money(value, "invoice total")
         for value in re.findall(rf"Total of this invoice:\s*{MONEY_PATTERN}", text)
@@ -318,6 +336,7 @@ def _parse_money(value: str, field_name: str) -> Decimal:
         amount = Decimal(value.replace(",", ""))
     except InvalidOperation as exc:
         raise PipelineError(f"{field_name} is invalid: {value!r}") from exc
+    # Decimal retains the printed precision needed for exact subtotal checks.
     if not amount.is_finite() or amount < 0 or amount.as_tuple().exponent < -2:
         raise PipelineError(f"{field_name} is invalid: {value!r}")
     return amount

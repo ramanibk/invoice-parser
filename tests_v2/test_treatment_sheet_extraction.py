@@ -6,8 +6,7 @@ from pathlib import Path
 import pytest
 import treatment_sheet_extraction
 from errors import PipelineError
-from models_treatment_sheet import CatRecord, ManifestEntry, MedicalFindings
-from preflight import RunManifest
+from models_treatment_sheet import ManifestEntry, MedicalFindings, RunManifest, TreatmentCat
 from treatment_sheet_extraction import (
     _appointments,
     _box_text,
@@ -84,10 +83,12 @@ def _header(service_date: str = "8/24/2026") -> str:
     )
 
 
-def _record(*, display_name: str = "(F) Sample Cat", owner_name: str = "Sample Owner") -> CatRecord:
+def _record(
+    *, display_name: str = "(F) Sample Cat", owner_name: str = "Sample Owner"
+) -> TreatmentCat:
     """Build a parsed record with selected identity overrides."""
     appointments = _appointments([FakePage(_header(), _medical_tables())])
-    return CatRecord(
+    return TreatmentCat(
         "26SEP03-NLF-1",
         display_name,
         display_name,
@@ -163,7 +164,7 @@ def test_normalizes_wrapped_treatment_sheet_header_field() -> None:
     ],
 )
 def test_rejects_manifest_identity_mismatch(
-    entry: ManifestEntry, record: CatRecord, message: str
+    entry: ManifestEntry, record: TreatmentCat, message: str
 ) -> None:
     """Reject owner differences and cat-name substring false positives."""
     with pytest.raises(PipelineError, match=message):
@@ -183,11 +184,11 @@ def test_extracts_complete_manifest_in_order(
         path.write_bytes(b"%PDF-placeholder")
     manifest = RunManifest(date(2026, 9, 3), entries, paths)
 
-    def parsed(path: Path, _run_date: date, sequence: int) -> CatRecord:
+    def parsed(path: Path, _run_date: date, sequence: int) -> TreatmentCat:
         """Return a valid parsed record aligned to the selected source path."""
         identity = entries[sequence - 1]
         record = _record(display_name=f"(F) {identity.cat_name}", owner_name=identity.owner_name)
-        return CatRecord(
+        return TreatmentCat(
             f"26SEP03-NLF-{sequence}",
             record.display_name,
             record.cat_name,
@@ -217,7 +218,7 @@ def test_manifest_failure_returns_no_partial_batch(
         path.write_bytes(b"%PDF-placeholder")
     manifest = RunManifest(date(2026, 9, 3), entries, paths)
 
-    def parsed(_path: Path, _run_date: date, sequence: int) -> CatRecord:
+    def parsed(_path: Path, _run_date: date, sequence: int) -> TreatmentCat:
         """Return one match followed by one deliberate owner mismatch."""
         owner = "Sample Owner" if sequence == 1 else "Wrong Owner"
         name = "Sample Cat" if sequence == 1 else "Other Cat"

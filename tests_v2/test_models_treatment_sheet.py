@@ -5,9 +5,9 @@ from datetime import date, datetime
 import pytest
 from errors import PipelineError
 from models_treatment_sheet import (
-    CatRecord,
     ManifestEntry,
     MedicalFindings,
+    TreatmentCat,
     TreatmentSheetAppointment,
 )
 
@@ -98,7 +98,7 @@ def test_constructs_cat_record_with_ordered_appointments() -> None:
         _appointment(service_date=date(2026, 8, 17)),
     )
 
-    record = CatRecord(
+    record = TreatmentCat(
         cat_id="26AUG24-NLF-1",
         display_name="(F) Nebula Delgado",
         cat_name="Nebula",
@@ -121,7 +121,7 @@ def test_constructs_cat_record_with_ordered_appointments() -> None:
 def test_rejects_cat_identity_mismatch(cat_id: str, message: str) -> None:
     """Reject cat IDs that conflict with configured run identity rules."""
     with pytest.raises(PipelineError, match=message):
-        CatRecord(cat_id, "Nebula", "Nebula", "Alexa", (_appointment(),))
+        TreatmentCat(cat_id, "Nebula", "Nebula", "Alexa", (_appointment(),))
 
 
 def test_rejects_duplicate_appointment_identity() -> None:
@@ -129,13 +129,13 @@ def test_rejects_duplicate_appointment_identity() -> None:
     appointments = (_appointment(), _appointment())
 
     with pytest.raises(PipelineError, match="unique service dates"):
-        CatRecord("26AUG24-NLF-1", "Nebula", "Nebula", "Alexa", appointments)
+        TreatmentCat("26AUG24-NLF-1", "Nebula", "Nebula", "Alexa", appointments)
 
 
 @pytest.mark.parametrize("appointments", [(), [], ("not an appointment",)])
 def test_rejects_invalid_appointment_collection(appointments: object) -> None:
     """Require a non-empty immutable collection of typed appointments."""
     with pytest.raises(PipelineError, match="cat appointments"):
-        CatRecord(  # type: ignore[arg-type]
+        TreatmentCat(  # type: ignore[arg-type]
             "26AUG24-NLF-1", "Nebula", "Nebula", "Alexa", appointments
         )

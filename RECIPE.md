@@ -1,11 +1,12 @@
 # Invoice pipeline recipe
 
 This is the living runbook for the rewritten invoice pipeline. The `invoice-pipeline` command
-performs preflight, Stage 1 invoice extraction, and Stage 2 treatment-sheet extraction. It validates
-all source identities and runtime prerequisites, plans the future output location, starts a
-persistent log, validates every printed invoice total, parses every treatment sheet, and checks its
-printed cat and owner identities against the manifest. It does not yet query Airtable, match invoice
-services to cats, create a run directory, or publish extraction artifacts.
+performs preflight, Stage 1 invoice extraction, Stage 2 treatment-sheet extraction, and Stage 3
+invoice-to-treatment-sheet matching. It validates all source identities and runtime prerequisites,
+starts a persistent log, validates every printed invoice total, parses every treatment sheet, checks
+its printed cat and owner identities against the manifest, and matches every invoice visit by date,
+cat, and owner before atomically publishing `extraction.json`. It does not yet query Airtable or
+match extracted cats to Airtable records.
 
 ## 1. Install the project
 
@@ -86,8 +87,9 @@ approve that extraction. For automation or noninteractive testing, disable revie
 uv run --env-file .env invoice-pipeline --date 09/03 --no-review ../bac-invoices/run-inputs
 ```
 
-Successful output includes the validated input counts, planned future run directory, and persistent
-log path. The log is created under `../bac-outputs/logs/`; the planned run directory is not created.
+Successful output includes the validated input counts, planned run directory, persistent log path,
+and published extraction artifact. The log is created under `../bac-outputs/logs/`; the run
+directory is created only after every extraction and invoice match passes validation.
 
 Use overrides when testing outside the normal project layout:
 
@@ -139,7 +141,14 @@ Stage 2: Treatment-sheet extraction
 [ok] Treatment-sheet extraction review approved
 
 Stage 2 complete.
-No run directory was created; later pipeline stages are not implemented yet.
+
+Stage 3: Invoice-to-treatment-sheet mapping
+[ok] 2 appointment(s) matched one-to-one
+[ok] Invoice services mapped to Airtable service names
+[ok] Extraction artifact published: /path/to/bac-outputs/26SEP03-NLF/extraction.json
+
+Stage 3 complete.
+Airtable retrieval and cat matching are not implemented yet.
 ```
 
 Stage 1 preserves each invoice animal display name, animal reference, owner name, combined identity
@@ -147,7 +156,7 @@ text, and service descriptions for later matching. It uses the PDF's detected An
 Species column boundaries so visually wrapped names and references remain in the correct field. It
 rejects unreadable PDFs, malformed appointment rows, non-numeric service prices, missing or
 inconsistent totals, service sums that differ from their appointment total, and appointment totals
-that differ from the invoice total. The service catalog is not applied until a later stage.
+that differ from the invoice total.
 
 Stage 2 preserves the complete printed cat display name, dated characteristics, and exact medical
 field text. Pages without a service-date header continue the preceding appointment. Before returning
@@ -155,6 +164,13 @@ any records, the stage requires every owner to match its manifest entry after ca
 normalization, and every manifest cat name to occur as a contiguous whole-token phrase in the printed
 display name. A malformed sheet or identity mismatch stops the batch without creating a run
 directory.
+
+Stage 3 requires every treatment-sheet appointment to match exactly one unused invoice appointment
+by service date, contiguous whole-token cat name, and normalized owner tokens. The manifest's
+explicit `N/A` owner sentinel does not constrain the invoice owner. Every invoice appointment must
+be consumed, and every invoice service description must exist in the validated service catalog.
+Only after the complete match succeeds does the pipeline create the run directory and atomically
+write `extraction.json`; matching or publication failures never leave a partial artifact.
 
 ## 5. Verify repository changes
 

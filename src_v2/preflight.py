@@ -12,14 +12,16 @@ from typing import Any
 
 from errors import PipelineError
 from global_constants import MANIFEST_FILENAME
-from models_treatment_sheet import ManifestEntry
-from models_validation import _require_date, _require_non_empty_tuple_of
+from models_treatment_sheet import ManifestEntry, RunManifest
+from models_validation import _require_absolute_path, _require_date
 from pipeline_config import PipelineConfig
 from pipeline_logging import OutputPlan, plan_output_paths, start_pipeline_log
 from resolve_run_identity import make_run_id
 from service_catalog import ServiceCatalog, load_service_catalog
 
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
+# Downloader metadata is accepted only as one complete envelope; partial metadata
+# cannot prove that the source download finished successfully.
 MANIFEST_METADATA_KEYS = frozenset({"invoiceCount", "total", "completed", "failures"})
 FULL_MANIFEST_KEYS = MANIFEST_KEYS | MANIFEST_METADATA_KEYS
 MANIFEST_ENTRY_KEYS = frozenset({"owner", "catName", "fileName"})
@@ -46,31 +48,6 @@ class RunInputFiles:
             raise PipelineError("invoice path must be an invoice-named PDF")
         if self.manifest_path.parent != self.invoice_path.parent:
             raise PipelineError("manifest and invoice must share one input directory")
-
-
-@dataclass(frozen=True)
-class RunManifest:
-    """Store a validated manifest and its aligned treatment-sheet source paths."""
-
-    run_date: Date
-    entries: tuple[ManifestEntry, ...]
-    treatment_sheet_paths: tuple[Path, ...]
-
-    def __post_init__(self) -> None:
-        """Require typed entries paired in order with absolute PDF paths."""
-        _require_date(self.run_date, "manifest date")
-        entries = _require_non_empty_tuple_of(self.entries, ManifestEntry, "manifest entries")
-        paths = _require_non_empty_tuple_of(
-            self.treatment_sheet_paths,
-            Path,
-            "treatment sheet paths",
-        )
-        if len(entries) != len(paths):
-            raise PipelineError(
-                "manifest entries and treatment sheet paths must have equal lengths"
-            )
-        for entry, path in zip(entries, paths, strict=True):
-            _validate_treatment_sheet_path(entry, path)
 
 
 @dataclass(frozen=True)
@@ -105,6 +82,8 @@ def run_preflight(
     """Validate all prerequisites, then start a log without creating a run directory."""
     if not isinstance(config, PipelineConfig):
         raise PipelineError("preflight requires PipelineConfig")
+    # Complete all read-only validation before starting the persistent log. The
+    # future run directory remains untouched until final artifact publication.
     input_files = discover_run_input_files(config.inputs.input_dir)
     manifest = load_run_manifest(config.run_date, input_files)
     service_catalog = load_service_catalog(config.inputs.service_catalog_path)
@@ -130,6 +109,8 @@ def discover_run_input_files(input_dir: Path) -> RunInputFiles:
     _require_absolute_path(input_dir, "input directory")
     if not input_dir.is_dir():
         raise PipelineError(f"input directory does not exist: {input_dir}")
+    # Take one directory snapshot so invoice selection is internally consistent
+    # even if an external downloader changes the directory during preflight.
     entries = _list_input_directory(input_dir)
     manifest_path = input_dir / MANIFEST_FILENAME
     _require_readable_file(manifest_path, "manifest")
@@ -157,6 +138,8 @@ def load_run_manifest(expected_run_date: Date, input_files: RunInputFiles) -> Ru
             f"manifest date {manifest_date.isoformat()}"
         )
     entries = _parse_manifest_entries(manifest_data["treatmentSheets"])
+    # Validate batch-completion evidence and all cross-file identities before
+    # constructing the accepted immutable manifest.
     _validate_manifest_metadata(manifest_data, len(entries))
     _require_unique_filenames(entries)
     _reject_invoice_overlap(entries, input_files.invoice_path)
@@ -291,6 +274,8 @@ def _parse_manifest_entry(value: object, index: int) -> ManifestEntry:
 def _require_manifest_keys(value: dict[str, Any]) -> None:
     """Accept either the core manifest or its complete downloader metadata envelope."""
     actual = frozenset(value)
+    # Exact keys reject misspellings and future schema additions until the parser
+    # explicitly defines how they affect completeness or identity.
     if actual not in (MANIFEST_KEYS, FULL_MANIFEST_KEYS):
         required = ", ".join(sorted(FULL_MANIFEST_KEYS))
         raise PipelineError(
@@ -333,6 +318,8 @@ def _require_exact_keys(value: dict[str, Any], expected: frozenset[str], locatio
 
 def _require_unique_filenames(entries: tuple[ManifestEntry, ...]) -> None:
     """Reject treatment-sheet filenames repeated with any letter casing."""
+    # Case-folding prevents collisions on case-insensitive filesystems even when
+    # the manifest uses different capitalization.
     filenames = [entry.filename.casefold() for entry in entries]
     if len(filenames) != len(set(filenames)):
         raise PipelineError("manifest treatment sheet filenames must be unique")
@@ -352,18 +339,13 @@ def _validated_treatment_sheet_path(input_dir: Path, entry: ManifestEntry) -> Pa
     return path
 
 
-def _validate_treatment_sheet_path(entry: ManifestEntry, path: Path) -> None:
-    """Require an absolute PDF path aligned with its manifest filename."""
-    _require_absolute_path(path, "treatment sheet path")
-    if path.name != entry.filename:
-        raise PipelineError("treatment sheet path must match its manifest filename")
-
-
 def _require_readable_file(path: Path, description: str) -> None:
     """Require a regular file that can be opened without modifying it."""
     if not path.is_file():
         raise PipelineError(f"input directory must contain {path.name}")
     try:
+        # Opening in binary read mode verifies access without decoding or changing
+        # source bytes; the stage parser performs the actual read later.
         with path.open("rb"):
             pass
     except OSError as exc:
@@ -374,11 +356,3 @@ def _is_invoice_pdf(path: Path) -> bool:
     """Return whether a filename identifies an invoice PDF candidate."""
     legacy_name = path.suffix.casefold() == ".pdf" and "invoice" in path.name.casefold()
     return legacy_name or NLF_INVOICE_FILENAME_PATTERN.fullmatch(path.name) is not None
-
-
-def _require_absolute_path(value: object, field_name: str) -> None:
-    """Require an absolute Path without checking whether it exists."""
-    if not isinstance(value, Path):
-        raise PipelineError(f"{field_name} must be a Path")
-    if not value.is_absolute():
-        raise PipelineError(f"{field_name} must be absolute")

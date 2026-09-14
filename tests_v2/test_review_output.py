@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from models_invoice import Invoice, InvoiceAppointment, InvoiceServiceLine
-from models_treatment_sheet import CatRecord, MedicalFindings, TreatmentSheetAppointment
+from models_treatment_sheet import MedicalFindings, TreatmentCat, TreatmentSheetAppointment
 from review_output import print_invoice_extraction, print_treatment_sheet_extraction
 
 
@@ -52,7 +52,7 @@ def test_prints_complete_treatment_sheet_extraction(
         "7.70 lbs",
         MedicalFindings(exam="Healthy", client_communication="Return in two weeks"),
     )
-    record = CatRecord(
+    record = TreatmentCat(
         "26SEP03-NLF-1",
         "(F) Sample Cat",
         "Sample Cat",

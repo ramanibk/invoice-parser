@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from models_invoice import Invoice
-from models_treatment_sheet import CatRecord
+from models_treatment_sheet import TreatmentCat
 
 
 def print_invoice_extraction(invoice: Invoice) -> None:
@@ -16,9 +16,9 @@ def print_invoice_extraction(invoice: Invoice) -> None:
     _print_extraction("Invoice extraction", invoice)
 
 
-def print_treatment_sheet_extraction(record: CatRecord, source_path: Path) -> None:
+def print_treatment_sheet_extraction(treatment_cat: TreatmentCat, source_path: Path) -> None:
     """Print every value extracted from one identified treatment sheet."""
-    _print_extraction(f"Treatment-sheet extraction: {source_path.name}", record)
+    _print_extraction(f"Treatment-sheet extraction: {source_path.name}", treatment_cat)
 
 
 def _print_extraction(heading: str, value: object) -> None:
@@ -31,6 +31,8 @@ def _print_extraction(heading: str, value: object) -> None:
 
 def _json_value(value: Any) -> str:
     """Convert supported typed model values into unambiguous JSON strings."""
+    # Review output favors stable human-readable identities over a general custom
+    # serializer; unsupported types fail visibly instead of being guessed.
     if isinstance(value, (Date, Path)):
         return value.isoformat() if isinstance(value, Date) else str(value)
     if isinstance(value, Decimal):

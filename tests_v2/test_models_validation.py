@@ -2,10 +2,13 @@
 
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from errors import PipelineError
 from models_validation import (
+    _is_airtable_record_id,
+    _require_absolute_path,
     _require_date,
     _require_microchip_number,
     _require_money,
@@ -14,6 +17,27 @@ from models_validation import (
     _require_text,
     _require_tuple_of,
 )
+
+
+def test_absolute_path_validation_rejects_other_values() -> None:
+    """Accept only an absolute Path without requiring it to exist."""
+    assert _require_absolute_path(Path("/future/output"), "output") is None
+    with pytest.raises(PipelineError, match="output must be absolute"):
+        _require_absolute_path(Path("relative/output"), "output")
+    with pytest.raises(PipelineError, match="output must be a Path"):
+        _require_absolute_path("/future/output", "output")
+
+
+@pytest.mark.parametrize("value", ["recCat1", "recABC123"])
+def test_airtable_record_id_shape_accepts_valid_values(value: str) -> None:
+    """Recognize syntactically valid Airtable record identifiers."""
+    assert _is_airtable_record_id(value)
+
+
+@pytest.mark.parametrize("value", ["cat1", "rec", "rec-with-dash", None])
+def test_airtable_record_id_shape_rejects_invalid_values(value: object) -> None:
+    """Reject missing or malformed Airtable record identifiers."""
+    assert not _is_airtable_record_id(value)
 
 
 def test_string_validation_preserves_empty_source_text() -> None:

@@ -9,6 +9,7 @@ from errors import PipelineError
 from models_validation import _require_text, _require_tuple_of
 
 FORMAT_VERSION = "1.0"
+# Only these Airtable multi-select fields may receive mapped invoice services.
 AIRTABLE_FIELD_NAMES = frozenset({"Services", "Additional Services"})
 CATALOG_KEYS = frozenset({"format_version", "services"})
 SERVICE_KEYS = frozenset(
@@ -50,6 +51,8 @@ class ServiceCatalog:
         if not self.services:
             raise PipelineError("service catalog services must be a non-empty tuple")
         services = _require_tuple_of(self.services, ServiceCatalogEntry, "service catalog services")
+        # Validate both output coverage and lookup uniqueness at load time so the
+        # matching stage can perform direct, deterministic mappings.
         _validate_airtable_field_coverage(services)
         _validate_unique_airtable_services(services)
         _validate_unique_invoice_descriptions(services)
@@ -77,6 +80,13 @@ def load_service_catalog(catalog_path: Path) -> ServiceCatalog:
         for position, service_json in enumerate(services_json, start=1)
     )
     return ServiceCatalog(services)
+
+
+def normalize_invoice_service_name(value: str) -> str:
+    """Normalize insignificant case and whitespace in an invoice service name."""
+    # Punctuation remains meaningful; only formatting differences known to arise
+    # from PDF text extraction are ignored.
+    return " ".join(value.casefold().split())
 
 
 def _read_catalog_json(catalog_path: Path) -> dict[str, Any]:
@@ -117,6 +127,8 @@ def _parse_service_entry(service_json: object, position: int) -> ServiceCatalogE
 
 def _validate_unique_airtable_services(services: tuple[ServiceCatalogEntry, ...]) -> None:
     """Require every field and option pair to identify one catalog service."""
+    # The Airtable field is part of the identity because equal option labels may
+    # legitimately exist in different multi-select fields.
     identities = [
         (service.airtable_field_name.casefold(), service.airtable_service_option.casefold())
         for service in services
@@ -137,8 +149,10 @@ def _validate_airtable_field_coverage(services: tuple[ServiceCatalogEntry, ...])
 
 def _validate_unique_invoice_descriptions(services: tuple[ServiceCatalogEntry, ...]) -> None:
     """Require each normalized invoice description to identify one catalog service."""
+    # Check normalized text rather than literal JSON strings because matching
+    # applies the same normalization to extracted invoice descriptions.
     normalized_descriptions = [
-        " ".join(description.casefold().split())
+        normalize_invoice_service_name(description)
         for service in services
         for description in service.recognized_invoice_descriptions
     ]

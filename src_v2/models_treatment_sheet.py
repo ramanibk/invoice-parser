@@ -3,11 +3,12 @@
 import re
 from dataclasses import dataclass, field, fields
 from datetime import date as Date
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from errors import PipelineError
 from global_constants import LOCATION_CODE, RUN_YEAR
 from models_validation import (
+    _require_absolute_path,
     _require_date,
     _require_microchip_number,
     _require_non_empty_tuple_of,
@@ -17,6 +18,8 @@ from models_validation import (
 from resolve_run_identity import MONTH_ABBREVIATIONS
 
 GENDERS = frozenset({"Female", "Male", "Unknown"})
+# Cat IDs encode the configured run date and one-based manifest position; the
+# separate calendar check below rejects regex-shaped but impossible dates.
 CAT_ID_PATTERN = re.compile(
     rf"{RUN_YEAR % 100:02d}({'|'.join(MONTH_ABBREVIATIONS)})(\d{{2}})-"
     rf"{LOCATION_CODE}-([1-9]\d*)"
@@ -36,6 +39,33 @@ class ManifestEntry:
         _require_text(self.owner_name, "manifest owner name")
         _require_text(self.cat_name, "manifest cat name")
         _validate_pdf_filename(self.filename)
+
+
+@dataclass(frozen=True)
+class RunManifest:
+    """Store a validated manifest and its aligned treatment-sheet source paths."""
+
+    run_date: Date
+    entries: tuple[ManifestEntry, ...]
+    treatment_sheet_paths: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        """Require typed entries paired in order with absolute PDF paths."""
+        _require_date(self.run_date, "manifest date")
+        entries = _require_non_empty_tuple_of(self.entries, ManifestEntry, "manifest entries")
+        paths = _require_non_empty_tuple_of(
+            self.treatment_sheet_paths,
+            Path,
+            "treatment sheet paths",
+        )
+        if len(entries) != len(paths):
+            raise PipelineError(
+                "manifest entries and treatment sheet paths must have equal lengths"
+            )
+        # Positional alignment is significant: the manifest order determines cat
+        # IDs and each entry must continue to point at its own source PDF.
+        for entry, path in zip(entries, paths, strict=True):
+            _validate_treatment_sheet_path(entry, path)
 
 
 @dataclass(frozen=True)
@@ -59,6 +89,8 @@ class MedicalFindings:
 
     def __post_init__(self) -> None:
         """Require every preserved medical field to remain textual."""
+        # Dataclass reflection keeps this invariant complete when a new preserved
+        # medical field is added to the model.
         for item in fields(self):
             _require_string(getattr(self, item.name), item.name)
 
@@ -86,7 +118,7 @@ class TreatmentSheetAppointment:
 
 
 @dataclass(frozen=True)
-class CatRecord:
+class TreatmentCat:
     """Store one manifest cat and its ordered treatment-sheet appointments."""
 
     cat_id: str
@@ -108,8 +140,17 @@ def _validate_pdf_filename(value: object) -> None:
     """Require a bare PDF filename that cannot redirect input reads."""
     _require_text(value, "manifest filename")
     path = PurePath(value)
+    # Reject both absolute paths and relative traversal; all source files must be
+    # resolved beneath the already validated run input directory.
     if path.is_absolute() or len(path.parts) != 1 or path.suffix.casefold() != ".pdf":
         raise PipelineError("manifest filename must be a bare PDF filename")
+
+
+def _validate_treatment_sheet_path(entry: ManifestEntry, path: Path) -> None:
+    """Require an absolute PDF path aligned with its manifest filename."""
+    _require_absolute_path(path, "treatment sheet path")
+    if path.name != entry.filename:
+        raise PipelineError("treatment sheet path must match its manifest filename")
 
 
 def _validate_gender(value: object) -> None:
@@ -134,6 +175,8 @@ def _validate_cat_id(value: object) -> None:
         raise PipelineError("cat ID must use canonical YYMMMDD-NLF-N format")
     month_name, day, _sequence = match.groups()
     try:
+        # Regex validation establishes shape; constructing a date establishes
+        # calendar validity, including month length and leap years.
         Date(RUN_YEAR, MONTH_ABBREVIATIONS.index(month_name) + 1, int(day))
     except ValueError as exc:
         raise PipelineError("cat ID must contain a valid run date") from exc

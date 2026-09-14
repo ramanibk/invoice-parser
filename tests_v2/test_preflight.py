@@ -8,12 +8,12 @@ from unittest.mock import Mock
 import preflight
 import pytest
 from errors import PipelineError
+from models_treatment_sheet import RunManifest
 from pipeline_config import AirtableConfig, InputPaths, PipelineConfig
 from pipeline_logging import OutputPlan
 from preflight import (
     PreflightResult,
     RunInputFiles,
-    RunManifest,
     discover_run_input_files,
     load_run_manifest,
     run_preflight,

@@ -1,7 +1,6 @@
 """Parse and identity-check NLF treatment-sheet PDFs without writing output."""
 
 import re
-import unicodedata
 from datetime import date as Date
 from datetime import datetime as DateTime
 from pathlib import Path
@@ -10,24 +9,26 @@ from typing import Any
 import pdfplumber
 from errors import PipelineError
 from models_treatment_sheet import (
-    CatRecord,
     ManifestEntry,
     MedicalFindings,
+    RunManifest,
+    TreatmentCat,
     TreatmentSheetAppointment,
 )
 from pdfminer.pdfparser import PDFSyntaxError
-from preflight import RunManifest
 from resolve_run_identity import make_cat_id
-from text_normalization import normalize_wrapped_text
+from text_normalization import contains_name, normalize_name, normalize_wrapped_text
 
 PATIENT_BOX_LEFT = 340
 OWNER_BOX_LEFT = 185
 
 
-def extract_treatment_sheets(manifest: RunManifest) -> tuple[CatRecord, ...]:
+def extract_treatment_sheets(manifest: RunManifest) -> tuple[TreatmentCat, ...]:
     """Parse every manifest sheet and return records only after all identities match."""
     if not isinstance(manifest, RunManifest):
         raise PipelineError("treatment-sheet extraction requires RunManifest")
+    # Build the batch in manifest order. Any failure aborts tuple construction,
+    # and this read-only stage has no partial artifact to clean up.
     return tuple(
         _extract_manifest_entry(manifest, entry, path, sequence)
         for sequence, (entry, path) in enumerate(
@@ -36,11 +37,13 @@ def extract_treatment_sheets(manifest: RunManifest) -> tuple[CatRecord, ...]:
     )
 
 
-def parse_treatment_sheet(path: Path, run_date: Date, sequence: int) -> CatRecord:
+def parse_treatment_sheet(path: Path, run_date: Date, sequence: int) -> TreatmentCat:
     """Read one absolute PDF and return its typed identity and dated appointments."""
     _validate_source_path(path)
     try:
         with pdfplumber.open(path) as pdf:
+            # Materialize pages while the PDF is open because later extraction
+            # groups and revisits them by appointment.
             pages = list(pdf.pages)
             appointments = _appointments(pages)
             display_name = _cat_name(pages)
@@ -51,7 +54,7 @@ def parse_treatment_sheet(path: Path, run_date: Date, sequence: int) -> CatRecor
         raise PipelineError(f"could not read treatment sheet {path}: {exc}") from exc
     if not appointments:
         raise PipelineError("no appointments were found")
-    return CatRecord(
+    return TreatmentCat(
         cat_id=make_cat_id(run_date, sequence),
         display_name=display_name,
         cat_name=display_name,
@@ -65,19 +68,23 @@ def _extract_manifest_entry(
     entry: ManifestEntry,
     path: Path,
     sequence: int,
-) -> CatRecord:
+) -> TreatmentCat:
     """Parse one sheet, verify its manifest identity, and apply authoritative names."""
     try:
-        record = parse_treatment_sheet(path, manifest.run_date, sequence)
-        _validate_identity(entry, record)
+        treatment_cat = parse_treatment_sheet(path, manifest.run_date, sequence)
+        _validate_identity(entry, treatment_cat)
     except PipelineError as exc:
+        # Prefix failures with the source filename so a multi-sheet run identifies
+        # the exact input without weakening the original diagnostic.
         raise PipelineError(f"{entry.filename}: {exc}") from exc
-    return CatRecord(
-        cat_id=record.cat_id,
-        display_name=record.display_name,
+    # The PDF display name remains evidence, while normalized manifest names are
+    # authoritative after the two sources have matched.
+    return TreatmentCat(
+        cat_id=treatment_cat.cat_id,
+        display_name=treatment_cat.display_name,
         cat_name=entry.cat_name,
         owner_name=entry.owner_name,
-        appointments=record.appointments,
+        appointments=treatment_cat.appointments,
     )
 
 
@@ -124,6 +131,8 @@ def _appointment_page_groups(pages: list[Any]) -> list[tuple[Date, list[Any]]]:
             current_pages = [page]
             groups.append((service_date, current_pages))
         elif current_pages is not None:
+            # Pages without a Service Date continue the preceding appointment;
+            # leading undated pages are ignored rather than guessed into a visit.
             current_pages.append(page)
     return groups
 
@@ -133,6 +142,8 @@ def _medical_findings(pages: list[Any]) -> MedicalFindings:
     page_tables = [_extract_tables(page) for page in pages]
     services_cell = _cell_with_heading(page_tables[0], "Services Received")
     exam_cell = _cell_with_heading(page_tables[0], "Exam")
+    # Several logical fields share ruled PDF cells. Split only at their required
+    # printed headings so empty values remain distinguishable from missing fields.
     services, appointment_notes = _split_field(services_cell, "Appt & Animal Notes:")
     exam, decline_reason = _split_field(exam_cell, "If declined for surgery, reason:")
     decline_reason, high_risk_reason = _split_field(decline_reason, "If high risk waiver, reason:")
@@ -198,6 +209,8 @@ def _bottom_fields(
     page_tables: list[list[list[list[str | None]]]],
 ) -> tuple[str, str, str]:
     """Combine Tests, RX, and Client Communication across continuation pages."""
+    # Keep page fragments separate until collection is complete, then preserve
+    # page boundaries with blank lines in the normalized field value.
     values: list[list[str]] = [[], [], []]
     for tables in page_tables:
         bottom = _bottom_table(tables)
@@ -213,6 +226,8 @@ def _bottom_table(tables: list[list[list[str | None]]]) -> list[list[str | None]
     """Return the optional three-row Tests/RX/Communication table."""
     for table in tables:
         labels = [row[0] or "" for row in table if row]
+        # The optional bottom table has three rows and an XR/Tests label; using
+        # both traits avoids mistaking another three-row layout for medical notes.
         if len(table) == 3 and any("XR" in label for label in labels):
             return table
     return []
@@ -244,6 +259,8 @@ def _owner_name(pages: list[Any]) -> str:
     field = _box_text(pages[0], (OWNER_BOX_LEFT, 0, PATIENT_BOX_LEFT, 27))
     if not field.startswith("Owner:"):
         raise PipelineError("owner field was not found")
+    # A present but blank Owner field is the source format's explicit no-owner
+    # state and is normalized to the matching stage's N/A sentinel.
     return field.removeprefix("Owner:").strip() or "N/A"
 
 
@@ -289,35 +306,13 @@ def _weight(text: str) -> str | None:
     return f"{value} lbs" if value else None
 
 
-def _validate_identity(entry: ManifestEntry, record: CatRecord) -> None:
+def _validate_identity(entry: ManifestEntry, treatment_cat: TreatmentCat) -> None:
     """Require the parsed owner and whole-token cat name to match the manifest."""
-    if _normalize_name(entry.owner_name) != _normalize_name(record.owner_name):
+    if normalize_name(entry.owner_name) != normalize_name(treatment_cat.owner_name):
         raise PipelineError(
-            f"owner mismatch; manifest={entry.owner_name!r}, PDF={record.owner_name!r}"
+            f"owner mismatch; manifest={entry.owner_name!r}, PDF={treatment_cat.owner_name!r}"
         )
-    if not _contains_name(record.display_name, entry.cat_name):
+    if not contains_name(treatment_cat.display_name, entry.cat_name):
         raise PipelineError(
-            f"cat mismatch; manifest={entry.cat_name!r}, PDF={record.display_name!r}"
+            f"cat mismatch; manifest={entry.cat_name!r}, PDF={treatment_cat.display_name!r}"
         )
-
-
-def _contains_name(display_name: str, expected_name: str) -> bool:
-    """Return whether an expected name occurs as one contiguous token phrase."""
-    display_tokens = _name_tokens(display_name)
-    expected_tokens = _name_tokens(expected_name)
-    width = len(expected_tokens)
-    return bool(expected_tokens) and any(
-        display_tokens[index : index + width] == expected_tokens
-        for index in range(len(display_tokens))
-    )
-
-
-def _normalize_name(value: str) -> str:
-    """Normalize identity text for punctuation- and case-insensitive comparison."""
-    return " ".join(_name_tokens(value))
-
-
-def _name_tokens(value: str) -> list[str]:
-    """Return case-folded Unicode word tokens used by identity checks."""
-    compatible = unicodedata.normalize("NFKC", value).casefold()
-    return re.findall(r"[\w]+", compatible)

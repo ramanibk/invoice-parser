@@ -15,6 +15,8 @@ from models_validation import (
 )
 
 SUPPORTED_CURRENCY = "USD"
+# Animal references are part of the invoice's printed identity and must retain
+# the clinic's two-digit year prefix plus its variable-length sequence.
 ANIMAL_REFERENCE_PATTERN = re.compile(r"\d{2}-\d+")
 
 
@@ -52,6 +54,8 @@ class InvoiceAppointment:
             raise PipelineError("invoice animal reference must use NN-N format")
         _require_text(self.owner_name, "invoice owner name")
         _require_text(self.identity_text, "invoice appointment identity")
+        # Preserve source order because later service aggregation uses first-seen
+        # order when multiple invoice descriptions map to one Airtable option.
         _require_non_empty_tuple_of(
             self.services, InvoiceServiceLine, "invoice appointment services"
         )
@@ -69,6 +73,8 @@ class Invoice:
 
     def __post_init__(self) -> None:
         """Validate the source identity, appointments, total, and currency."""
+        # Models validate path identity only; parser and preflight layers own
+        # existence and readability checks to keep model construction side-effect free.
         _validate_source_file(self.source_file)
         _require_non_empty_tuple_of(self.appointments, InvoiceAppointment, "invoice appointments")
         _require_money(self.total_cost, "invoice total")

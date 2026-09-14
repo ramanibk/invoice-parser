@@ -14,9 +14,11 @@ from global_constants import (
     RUN_YEAR,
     SERVICE_CATALOG_FILENAME,
 )
-from models_validation import _require_date, _require_text
+from models_validation import _require_absolute_path, _require_date, _require_text
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+# Defaults are anchored to the installed module rather than the caller's working
+# directory, so the bundled catalog and sibling output location stay stable.
 DEFAULT_OUTPUT_DIR = PROJECT_DIR.parent / OUTPUT_DIRECTORY_NAME
 DEFAULT_SERVICE_CATALOG_PATH = Path(__file__).with_name(SERVICE_CATALOG_FILENAME)
 
@@ -38,6 +40,8 @@ class InputPaths:
 class AirtableConfig:
     """Hold credentials and stable schema identities for read-only Airtable work."""
 
+    # Excluding the bearer token from repr prevents accidental disclosure in logs
+    # or assertion output containing the configuration model.
     token: str = field(repr=False)
     base_id: str
     appointments_table_id: str
@@ -90,6 +94,8 @@ def build_pipeline_config(
     base_dir: Path | None = None,
 ) -> PipelineConfig:
     """Build configuration from a confirmed run date without inspecting any path."""
+    # Dependency-injected environment and base directory values keep resolution
+    # deterministic in tests without changing production behavior.
     env_values = os.environ if env is None else env
     resolved_base_dir = Path.cwd() if base_dir is None else base_dir
     inputs = InputPaths(
@@ -130,6 +136,8 @@ def _build_airtable_config(
     cats_table_id: str | None,
 ) -> AirtableConfig:
     """Prefer explicit Airtable values and otherwise use named environment entries."""
+    # An explicit value, including an invalid blank value, wins over the
+    # environment so validation never silently replaces a caller mistake.
     overrides = {
         "token": token,
         "base_id": base_id,
@@ -162,15 +170,9 @@ def _resolve_path(value: object, base_dir: Path, field_name: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = base_dir / path
+    # Resolve lexical components now; existence and readability belong to
+    # preflight, where failures can identify the specific input role.
     return path.resolve()
-
-
-def _require_absolute_path(value: object, field_name: str) -> None:
-    """Require an absolute Path without checking filesystem state."""
-    if not isinstance(value, Path):
-        raise PipelineError(f"{field_name} must be a Path")
-    if not value.is_absolute():
-        raise PipelineError(f"{field_name} must be absolute")
 
 
 def _require_json_path(value: object, field_name: str) -> None:

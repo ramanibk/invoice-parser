@@ -4,11 +4,25 @@ import re
 from datetime import date as Date
 from datetime import datetime as DateTime
 from decimal import Decimal
+from pathlib import Path
 from typing import TypeVar, cast
 
 from errors import PipelineError
 
 ModelValue = TypeVar("ModelValue")
+
+
+def _require_absolute_path(value: object, field_name: str) -> None:
+    """Require an absolute Path without inspecting the filesystem."""
+    if not isinstance(value, Path):
+        raise PipelineError(f"{field_name} must be a Path")
+    if not value.is_absolute():
+        raise PipelineError(f"{field_name} must be absolute")
+
+
+def _is_airtable_record_id(value: object) -> bool:
+    """Return whether a value has Airtable's record-ID shape."""
+    return isinstance(value, str) and re.fullmatch(r"rec[A-Za-z0-9]+", value) is not None
 
 
 def _require_string(value: object, field_name: str) -> None:
@@ -26,6 +40,8 @@ def _require_text(value: object, field_name: str) -> None:
 
 def _require_date(value: object, field_name: str) -> None:
     """Require a calendar date without accepting a datetime subclass."""
+    # datetime inherits from date, but accepting one would introduce an ignored
+    # time and timezone into identities that are defined by calendar day only.
     if not isinstance(value, Date) or isinstance(value, DateTime):
         raise PipelineError(f"{field_name} must be a date")
 
@@ -38,6 +54,8 @@ def _require_money(value: object, field_name: str) -> None:
         raise PipelineError(f"{field_name} must be finite")
     if value < 0:
         raise PipelineError(f"{field_name} must be nonnegative")
+    # The Decimal exponent preserves entered precision, unlike a float-based
+    # round check that could silently accept a binary approximation.
     if value.as_tuple().exponent < -2:
         raise PipelineError(f"{field_name} must have at most two fractional places")
 
@@ -60,6 +78,7 @@ def _require_tuple_of(
         raise PipelineError(f"{field_name} must be a tuple")
     if not all(isinstance(item, item_type) for item in value):
         raise PipelineError(f"{field_name} must contain only {item_type.__name__} values")
+    # The runtime checks above justify the narrow generic type returned to models.
     return cast(tuple[ModelValue, ...], value)
 
 

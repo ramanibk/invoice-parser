@@ -1,6 +1,5 @@
 """Represent normalized read-only Airtable values used by later stages."""
 
-import re
 from dataclasses import dataclass
 from datetime import date as Date
 from decimal import Decimal
@@ -8,6 +7,7 @@ from decimal import Decimal
 from errors import PipelineError
 from global_constants import LOCATION_CODE, LOCATION_NAME
 from models_validation import (
+    _is_airtable_record_id,
     _require_date,
     _require_microchip_number,
     _require_money,
@@ -33,6 +33,8 @@ class AirtableVoucher:
 class AirtableCatRecord:
     """Store one normalized cat joined to its scoped Airtable appointment."""
 
+    # Appointment values are repeated for each linked cat because Airtable owns
+    # them at appointment level while downstream matching operates per cat.
     airtable_cat_id: str
     airtable_appointment_id: str
     cat_name: str
@@ -93,12 +95,14 @@ class AirtableSnapshot:
 
 def _require_record_id(value: object, field_name: str) -> None:
     """Require the syntactic shape of an Airtable record identifier."""
-    if not isinstance(value, str) or re.fullmatch(r"rec[A-Za-z0-9]+", value) is None:
+    if not _is_airtable_record_id(value):
         raise PipelineError(f"{field_name} must be an Airtable record ID")
 
 
 def _validate_optional_fields(record: AirtableCatRecord) -> None:
     """Validate each optional normalized field without changing source text."""
+    # Centralizing these similarly shaped fields keeps additions explicit while
+    # preserving their exact display text for later identity comparison.
     names = (
         "appointment_owner_or_trapper",
         "appointment_cat_address",
@@ -146,6 +150,8 @@ def _validate_appointment_record_count(
     """Require a source count large enough for represented appointments."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise PipelineError("Airtable appointment record count must be a nonnegative integer")
+    # Several cats may share one appointment, so compare the count with distinct
+    # appointment identities rather than the number of cat rows.
     appointment_ids = {item.airtable_appointment_id for item in cat_records}
     if len(appointment_ids) > value:
         raise PipelineError(

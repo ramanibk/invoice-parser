@@ -9,6 +9,7 @@ from pathlib import Path
 from errors import PipelineError
 from global_constants import LOG_DIRECTORY_NAME
 from models_validation import (
+    _require_absolute_path,
     _require_date,
     _require_non_empty_tuple_of,
     _require_text,
@@ -51,6 +52,8 @@ def plan_output_paths(
     effective_start = DateTime.now().astimezone() if started_at is None else started_at
     _require_datetime(effective_start)
     run_id = make_run_id(run_date)
+    # Planning is deliberately non-creating. Publication later uses exclusive
+    # directory creation, which remains authoritative if a collision appears.
     run_directory = _next_available_path(output_dir, run_id)
     log_name = f"{effective_start:%Y%m%dT%H%M%S%f%z}-{run_directory.name}.log"
     log_path = _next_available_log_path(output_dir / LOG_DIRECTORY_NAME, log_name)
@@ -68,8 +71,11 @@ def start_pipeline_log(
         raise PipelineError("pipeline log requires an OutputPlan")
     entries = _validated_log_entries(messages)
     sanitized_entries = _redact_sensitive_values(entries, sensitive_values)
+    # Redact before any filesystem operation so raw secrets never reach disk,
+    # including when a later write fails.
     _create_log_parent(plan)
     try:
+        # Exclusive mode protects an existing log if a timestamp collision occurs.
         with plan.log_path.open("x", encoding="utf-8") as log_file:
             for message in sanitized_entries:
                 log_file.write(f"{message}\n")
@@ -91,6 +97,7 @@ def append_pipeline_log(
         raise PipelineError("pipeline log append requires an OutputPlan")
     entries = _validated_log_entries(messages)
     sanitized_entries = _redact_sensitive_values(entries, sensitive_values)
+    # Appending is allowed only after preflight successfully established the log.
     if not plan.log_path.is_file():
         raise PipelineError("pipeline log must exist before stage messages are appended")
     try:
@@ -133,6 +140,8 @@ def _validate_output_directory(output_dir: Path) -> None:
     """Require an existing directory or a writable ancestor for a future one."""
     if output_dir.exists() and not output_dir.is_dir():
         raise PipelineError(f"output path is not a directory: {output_dir}")
+    # A missing output tree is acceptable when its closest existing ancestor can
+    # create descendants; actual creation remains deferred.
     writable_parent = output_dir if output_dir.is_dir() else _nearest_existing_parent(output_dir)
     if not os.access(writable_parent, os.W_OK | os.X_OK):
         raise PipelineError(f"output directory is not writable: {output_dir}")
@@ -181,6 +190,8 @@ def _remove_empty_log_directories(plan: OutputPlan) -> None:
     """Best-effort remove directories created for a log that failed to start."""
     for directory in (plan.log_path.parent, plan.output_dir):
         try:
+            # rmdir removes only empty directories, preserving any pre-existing or
+            # concurrently written output.
             directory.rmdir()
         except OSError:
             return
@@ -198,11 +209,3 @@ def _require_datetime(value: object) -> None:
     """Require a timezone-aware datetime for an unambiguous log identity."""
     if not isinstance(value, DateTime) or value.tzinfo is None or value.utcoffset() is None:
         raise PipelineError("pipeline log start time must be timezone-aware")
-
-
-def _require_absolute_path(value: object, field_name: str) -> None:
-    """Require an absolute Path without checking whether it exists."""
-    if not isinstance(value, Path):
-        raise PipelineError(f"{field_name} must be a Path")
-    if not value.is_absolute():
-        raise PipelineError(f"{field_name} must be absolute")

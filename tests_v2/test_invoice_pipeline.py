@@ -12,7 +12,7 @@ import pytest
 from errors import PipelineError
 from invoice_pipeline import main
 from models_invoice import Invoice, InvoiceAppointment, InvoiceServiceLine
-from models_treatment_sheet import CatRecord, TreatmentSheetAppointment
+from models_treatment_sheet import TreatmentCat, TreatmentSheetAppointment
 
 AIRTABLE_ENV = {
     "AIRTABLE_TOKEN": "secret",
@@ -67,11 +67,11 @@ def _parsed_invoice(path: Path) -> Invoice:
     return Invoice(path, (appointment,), Decimal("125.00"))
 
 
-def _parsed_records() -> tuple[CatRecord, ...]:
+def _parsed_records() -> tuple[TreatmentCat, ...]:
     """Return one valid treatment-sheet record for CLI orchestration tests."""
     appointment = TreatmentSheetAppointment(date(2026, 9, 3), "Female", None, "Black", None)
     return (
-        CatRecord(
+        TreatmentCat(
             "26SEP03-NLF-1",
             "Sample Cat",
             "Sample Cat",
@@ -124,11 +124,18 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Invoice total validated: USD 125.00" in captured.out
     assert "Stage 2: Treatment-sheet extraction" in captured.out
     assert "1 treatment sheet(s) parsed and identity-checked" in captured.out
-    assert "later pipeline stages are not implemented yet" in captured.out
+    assert "Stage 3: Invoice-to-treatment-sheet mapping" in captured.out
+    assert "1 appointment(s) matched one-to-one" in captured.out
+    assert "Extraction artifact published:" in captured.out
+    assert "Airtable retrieval and cat matching are not implemented yet" in captured.out
     assert '"source_file"' not in captured.out
     assert '"medical_findings"' not in captured.out
     assert captured.err == ""
-    assert not (output_dir / "26SEP03-NLF").exists()
+    artifact_path = output_dir / "26SEP03-NLF" / "extraction.json"
+    assert artifact_path.is_file()
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["cats"][0]["appointments"]["2026-09-03"]["services"] == {"Spay / Neuter": 125.0}
+    assert artifact["invoice"]["total_cost"] == "125.00"
     log_paths = tuple((output_dir / "logs").glob("*.log"))
     assert len(log_paths) == 1
     log_text = log_paths[0].read_text(encoding="utf-8")
@@ -137,6 +144,7 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert AIRTABLE_ENV["AIRTABLE_TOKEN"] not in log_text
     assert "Stage 1 invoice extraction passed." in log_text
     assert "Stage 2 treatment-sheet extraction passed." in log_text
+    assert "Stage 3 invoice-to-treatment-sheet mapping passed." in log_text
     assert review_calls == [
         (input_dir / "clinic-invoice.pdf", "invoice", False),
         (
@@ -252,7 +260,7 @@ def test_cli_reports_treatment_sheet_failure_without_partial_run_output(
         ),
     )
 
-    def fail_sheets(_manifest: object) -> tuple[CatRecord, ...]:
+    def fail_sheets(_manifest: object) -> tuple[TreatmentCat, ...]:
         """Simulate a manifest identity mismatch after invoice success."""
         raise PipelineError("sample-cat.pdf: owner mismatch")
 
@@ -274,6 +282,48 @@ def test_cli_reports_treatment_sheet_failure_without_partial_run_output(
     assert "Stage 1 complete." in captured.out
     assert "sample-cat.pdf: owner mismatch" in captured.err
     assert review_calls == [(input_dir / "clinic-invoice.pdf", "invoice", False)]
+    assert not (output_dir / "26SEP03-NLF").exists()
+
+
+def test_cli_reports_mapping_failure_without_partial_run_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reject cross-source identity mismatches before publishing extraction JSON."""
+    input_dir = tmp_path / "inputs"
+    output_dir = tmp_path / "outputs"
+    _write_run_inputs(input_dir)
+    _set_airtable_environment(monkeypatch)
+    invoice = _parsed_invoice(input_dir / "clinic-invoice.pdf")
+    mismatched = _parsed_records()[0]
+    records = (
+        TreatmentCat(
+            mismatched.cat_id,
+            "Different Cat",
+            "Different Cat",
+            mismatched.owner_name,
+            mismatched.appointments,
+        ),
+    )
+    monkeypatch.setattr(invoice_pipeline, "parse_invoice", lambda _path: invoice)
+    monkeypatch.setattr(invoice_pipeline, "extract_treatment_sheets", lambda _manifest: records)
+    monkeypatch.setattr(invoice_pipeline, "review_extraction", lambda *_args, **_kwargs: None)
+
+    status = main(
+        [
+            "--date",
+            "09/03",
+            "--no-review",
+            "--outputs-dir",
+            str(output_dir),
+            str(input_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "no invoice appointment matches" in captured.err
     assert not (output_dir / "26SEP03-NLF").exists()
 
 

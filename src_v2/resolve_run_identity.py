@@ -28,6 +28,7 @@ def resolve_run_date(
     current_date: Date | None = None,
 ) -> Date:
     """Resolve a strict ``MM/DD`` value using the configured global run year."""
+    # The injected current date makes the year-confirmation boundary testable.
     effective_date = current_date or Date.today()
     _confirm_configured_run_year(effective_date.year)
     if re.fullmatch(r"\d{2}/\d{2}", value) is None:
@@ -41,6 +42,8 @@ def resolve_run_date(
 
 def _confirm_configured_run_year(current_year: int) -> None:
     """Prompt before using the configured year when it differs from the current year."""
+    # A mismatched real-world year usually means the annual constant was not
+    # updated; require an explicit operator decision before creating identities.
     if current_year == RUN_YEAR:
         return
     prompt = (
@@ -65,6 +68,8 @@ def make_cat_id(run_date: Date, sequence: int) -> str:
 def make_run_id(run_date: Date) -> str:
     """Build the canonical run identifier for a resolved run date."""
     _validate_run_date(run_date)
+    # The fixed English abbreviations keep artifact names independent of the
+    # machine's locale configuration.
     month = MONTH_ABBREVIATIONS[run_date.month - 1]
     return f"{run_date:%y}{month}{run_date:%d}-{LOCATION_CODE}"
 

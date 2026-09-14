@@ -11,6 +11,8 @@ def review_extraction(pdf_path: Path, description: str, *, review_enabled: bool 
     """Open one source PDF and require approval of its printed extraction."""
     if not isinstance(review_enabled, bool):
         raise PipelineError("review enabled must be a boolean")
+    # Automated runs bypass viewer-specific path and terminal work entirely;
+    # preflight has already validated the underlying source files.
     if not review_enabled:
         return
     _validate_review_input(pdf_path, description)
@@ -30,6 +32,8 @@ def _validate_review_input(pdf_path: object, description: object) -> None:
 def _open_pdf(pdf_path: Path, description: str) -> None:
     """Launch the configured system PDF viewer and report launch failures."""
     try:
+        # Pass arguments without a shell so filenames cannot be interpreted as
+        # commands or options by shell syntax.
         completed = subprocess.run(("open", str(pdf_path)), check=False)
     except OSError as exc:
         raise PipelineError(f"could not open {description} for review: {exc}") from exc
