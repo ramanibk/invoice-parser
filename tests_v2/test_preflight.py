@@ -1,10 +1,12 @@
 """Tests for read-only pipeline preflight validation."""
 
+import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 from errors import PipelineError
-from preflight import RunInputFiles, discover_run_input_files
+from preflight import RunInputFiles, RunManifest, discover_run_input_files, load_run_manifest
 
 
 def _create_valid_inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -14,6 +16,32 @@ def _create_valid_inputs(tmp_path: Path) -> tuple[Path, Path]:
     manifest_path.write_text("{}", encoding="utf-8")
     invoice_path.write_bytes(b"%PDF-placeholder")
     return manifest_path, invoice_path
+
+
+def _write_valid_manifest(tmp_path: Path, entries: list[dict[str, object]] | None = None) -> None:
+    """Write a representative manifest and each declared treatment-sheet PDF."""
+    sheets = entries or [
+        {
+            "owner": "Alexa Camorlinga",
+            "catName": "Nebula",
+            "fileName": "Nebula.pdf",
+        }
+    ]
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"date": "2026-09-03", "treatmentSheets": sheets}),
+        encoding="utf-8",
+    )
+    for sheet in sheets:
+        filename = sheet.get("fileName")
+        if isinstance(filename, str) and Path(filename).name == filename:
+            (tmp_path / filename).write_bytes(b"%PDF-placeholder")
+
+
+def _valid_discovered_inputs(tmp_path: Path) -> RunInputFiles:
+    """Create and discover valid manifest and invoice source files."""
+    _write_valid_manifest(tmp_path)
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    return discover_run_input_files(tmp_path)
 
 
 def test_discovers_manifest_and_one_invoice_without_changes(tmp_path: Path) -> None:
@@ -102,3 +130,120 @@ def test_rejects_discovery_result_from_different_directories(tmp_path: Path) -> 
     """Require the manifest and invoice to belong to one run input directory."""
     with pytest.raises(PipelineError, match="must share one input directory"):
         RunInputFiles(tmp_path / "manifest.json", tmp_path / "other" / "invoice.pdf")
+
+
+def test_loads_complete_manifest_in_source_order(tmp_path: Path) -> None:
+    """Return validated entries aligned with their readable treatment sheets."""
+    entries = [
+        {"owner": " Alexa ", "catName": " Nebula ", "fileName": "Nebula.pdf"},
+        {"owner": "N/A", "catName": "Miso", "fileName": "Miso.pdf"},
+    ]
+    _write_valid_manifest(tmp_path, entries)
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    input_files = discover_run_input_files(tmp_path)
+
+    manifest = load_run_manifest(date(2026, 9, 3), input_files)
+
+    assert isinstance(manifest, RunManifest)
+    assert manifest.run_date == date(2026, 9, 3)
+    assert [entry.cat_name for entry in manifest.entries] == ["Nebula", "Miso"]
+    assert manifest.treatment_sheet_paths == (tmp_path / "Nebula.pdf", tmp_path / "Miso.pdf")
+
+
+def test_rejects_manifest_date_identity_mismatch(tmp_path: Path) -> None:
+    """Reject a manifest belonging to a different configured run date."""
+    input_files = _valid_discovered_inputs(tmp_path)
+
+    with pytest.raises(PipelineError, match="expected run date 2026-09-04 does not match"):
+        load_run_manifest(date(2026, 9, 4), input_files)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "manifest must contain a JSON object"),
+        ({"date": "2026-09-03"}, "manifest must contain exactly these fields"),
+        (
+            {"date": "2026-09-03", "treatmentSheets": [], "extra": True},
+            "manifest must contain exactly these fields",
+        ),
+        (
+            {"date": "09/03/2026", "treatmentSheets": [{}]},
+            "manifest date must use YYYY-MM-DD",
+        ),
+        (
+            {"date": "2026-09-03", "treatmentSheets": []},
+            "treatmentSheets must be a non-empty array",
+        ),
+        (
+            {"date": "2026-09-03", "treatmentSheets": ["Nebula.pdf"]},
+            r"treatmentSheets\[1\] must be an object",
+        ),
+        (
+            {"date": "2026-09-03", "treatmentSheets": [{"owner": "Alexa"}]},
+            r"treatmentSheets\[1\] must contain exactly these fields",
+        ),
+        (
+            {
+                "date": "2026-09-03",
+                "treatmentSheets": [{"owner": "", "catName": "Nebula", "fileName": "Nebula.pdf"}],
+            },
+            r"treatmentSheets\[1\].owner must be a non-empty string",
+        ),
+    ],
+)
+def test_rejects_malformed_manifest_json(
+    tmp_path: Path,
+    payload: object,
+    message: str,
+) -> None:
+    """Reject malformed manifest roots, fields, dates, arrays, and entries."""
+    (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    input_files = discover_run_input_files(tmp_path)
+
+    with pytest.raises(PipelineError, match=message):
+        load_run_manifest(date(2026, 9, 3), input_files)
+
+
+def test_rejects_invalid_manifest_json_syntax(tmp_path: Path) -> None:
+    """Translate JSON decoding failures into a manifest-specific pipeline error."""
+    (tmp_path / "manifest.json").write_text("{not JSON", encoding="utf-8")
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    input_files = discover_run_input_files(tmp_path)
+
+    with pytest.raises(PipelineError, match="could not read manifest"):
+        load_run_manifest(date(2026, 9, 3), input_files)
+
+
+def test_rejects_duplicate_treatment_sheet_filenames(tmp_path: Path) -> None:
+    """Reject duplicate manifest files even when only letter casing differs."""
+    entries = [
+        {"owner": "Alexa", "catName": "Nebula", "fileName": "Nebula.pdf"},
+        {"owner": "Alexa", "catName": "Miso", "fileName": "NEBULA.PDF"},
+    ]
+    _write_valid_manifest(tmp_path, entries)
+    (tmp_path / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    input_files = discover_run_input_files(tmp_path)
+
+    with pytest.raises(PipelineError, match="filenames must be unique"):
+        load_run_manifest(date(2026, 9, 3), input_files)
+
+
+def test_rejects_missing_treatment_sheet(tmp_path: Path) -> None:
+    """Reject a manifest when any declared treatment sheet is unavailable."""
+    input_files = _valid_discovered_inputs(tmp_path)
+    (tmp_path / "Nebula.pdf").unlink()
+
+    with pytest.raises(PipelineError, match="must contain Nebula.pdf"):
+        load_run_manifest(date(2026, 9, 3), input_files)
+
+
+def test_rejects_invoice_declared_as_treatment_sheet(tmp_path: Path) -> None:
+    """Prevent the invoice PDF from also being processed as a treatment sheet."""
+    entries = [{"owner": "Alexa", "catName": "Nebula", "fileName": "clinic invoice.pdf"}]
+    _write_valid_manifest(tmp_path, entries)
+    input_files = discover_run_input_files(tmp_path)
+
+    with pytest.raises(PipelineError, match="cannot also be a treatment sheet"):
+        load_run_manifest(date(2026, 9, 3), input_files)
