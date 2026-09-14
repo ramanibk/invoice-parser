@@ -160,6 +160,7 @@ def test_query_paginates_and_counts_unique_linked_cats() -> None:
     )
 
     def transport(request):
+        """Capture one request and return the next prepared Airtable page."""
         requests.append(request)
         return _response(next(pages))
 
@@ -259,6 +260,7 @@ def test_query_sends_exact_date_and_resolved_location() -> None:
     captured = []
 
     def transport(request):
+        """Capture the scoped Airtable request and return an empty result page."""
         captured.append(request)
         return _response({"records": []})
 

@@ -40,20 +40,24 @@ def test_prepare_runs_query_extraction_save_and_prompt_in_order(
     monkeypatch.setattr(prepare, "AirtableClient", lambda *args, **kwargs: object())
 
     def query(*args, **kwargs):
+        """Record the query stage and return its prepared result."""
         events.append("query")
         return result
 
     def extract(*args, **kwargs):
+        """Record extraction and verify its resolved source paths."""
         events.append("extract")
         assert args[0] == tmp_path / "inputs" / "manifest.json"
         assert kwargs["invoice_path"] == tmp_path / "inputs" / "clinic invoice.pdf"
         return run / "extraction.json"
 
     def save(*args, **kwargs):
+        """Record publication of the prepared Airtable snapshot."""
         events.append("save")
         return run / "needs_invoice.json"
 
     def prompt(*args, **kwargs):
+        """Record prompt generation and return recognizable output."""
         events.append("prompt")
         return "mapping prompt"
 
