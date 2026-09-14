@@ -1,10 +1,12 @@
 """Validate read-only prerequisites before numbered pipeline stages begin."""
 
 import json
+import re
 import shutil
 import sys
 from dataclasses import dataclass
 from datetime import date as Date
+from datetime import datetime as DateTime
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,9 @@ from errors import PipelineError
 from models_treatment_sheet import ManifestEntry
 from models_validation import _require_date, _require_non_empty_tuple_of
 from pipeline_config import PipelineConfig
+from pipeline_logging import OutputPlan, plan_output_paths, start_pipeline_log
+from resolve_run_identity import make_run_id
+from service_catalog import ServiceCatalog, load_service_catalog
 
 MANIFEST_FILENAME = "manifest.json"
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
@@ -60,6 +65,47 @@ class RunManifest:
             )
         for entry, path in zip(entries, paths, strict=True):
             _validate_treatment_sheet_path(entry, path)
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    """Carry every validated prerequisite into the first numbered stage."""
+
+    config: PipelineConfig
+    input_files: RunInputFiles
+    manifest: RunManifest
+    service_catalog: ServiceCatalog
+    output_plan: OutputPlan
+
+    def __post_init__(self) -> None:
+        """Require aligned typed state and an active persistent log."""
+        _require_preflight_types(self)
+        if self.config.run_date != self.manifest.run_date:
+            raise PipelineError("preflight configuration and manifest dates must match")
+        if self.input_files.manifest_path.parent != self.config.inputs.input_dir:
+            raise PipelineError("preflight input files must belong to the configured directory")
+        if self.output_plan.output_dir != self.config.output_dir:
+            raise PipelineError("preflight output plan must use the configured output directory")
+        _validate_output_identity(self.output_plan, self.config.run_date)
+        if not self.output_plan.log_path.is_file():
+            raise PipelineError("preflight pipeline log must be active")
+
+
+def run_preflight(
+    config: PipelineConfig,
+    *,
+    started_at: DateTime | None = None,
+) -> PreflightResult:
+    """Validate all prerequisites, then start a log without creating a run directory."""
+    if not isinstance(config, PipelineConfig):
+        raise PipelineError("preflight requires PipelineConfig")
+    input_files = discover_run_input_files(config.inputs.input_dir)
+    manifest = load_run_manifest(config.run_date, input_files)
+    service_catalog = load_service_catalog(config.inputs.service_catalog_path)
+    validate_runtime_readiness(config)
+    output_plan = plan_output_paths(config.output_dir, config.run_date, started_at=started_at)
+    start_pipeline_log(output_plan, _preflight_log_messages(manifest, service_catalog))
+    return PreflightResult(config, input_files, manifest, service_catalog, output_plan)
 
 
 def discover_run_input_files(input_dir: Path) -> RunInputFiles:
@@ -112,6 +158,39 @@ def validate_runtime_readiness(config: PipelineConfig) -> None:
         return
     _require_interactive_terminal()
     _require_pdf_viewer()
+
+
+def _require_preflight_types(result: PreflightResult) -> None:
+    """Require each integrated preflight field to use its dedicated model."""
+    expected_types = (
+        (result.config, PipelineConfig, "configuration"),
+        (result.input_files, RunInputFiles, "input files"),
+        (result.manifest, RunManifest, "manifest"),
+        (result.service_catalog, ServiceCatalog, "service catalog"),
+        (result.output_plan, OutputPlan, "output plan"),
+    )
+    for value, expected_type, description in expected_types:
+        if not isinstance(value, expected_type):
+            raise PipelineError(f"preflight {description} must be {expected_type.__name__}")
+
+
+def _preflight_log_messages(
+    manifest: RunManifest,
+    service_catalog: ServiceCatalog,
+) -> tuple[str, ...]:
+    """Build privacy-conscious log entries for an accepted preflight."""
+    return (
+        f"Preflight passed for {manifest.run_date.isoformat()}.",
+        f"Validated {len(manifest.entries)} treatment sheet(s).",
+        f"Validated {len(service_catalog.services)} service catalog entries.",
+    )
+
+
+def _validate_output_identity(output_plan: OutputPlan, run_date: Date) -> None:
+    """Require the future directory to use the configured run ID and optional sequence."""
+    run_id = re.escape(make_run_id(run_date))
+    if re.fullmatch(rf"{run_id}(?:\.[1-9]\d*)?", output_plan.run_directory.name) is None:
+        raise PipelineError("preflight future run directory must match the configured run ID")
 
 
 def _require_interactive_terminal() -> None:

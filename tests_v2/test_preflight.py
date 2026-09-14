@@ -1,7 +1,7 @@
 """Tests for read-only pipeline preflight validation."""
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -9,13 +9,17 @@ import preflight
 import pytest
 from errors import PipelineError
 from pipeline_config import AirtableConfig, InputPaths, PipelineConfig
+from pipeline_logging import OutputPlan
 from preflight import (
+    PreflightResult,
     RunInputFiles,
     RunManifest,
     discover_run_input_files,
     load_run_manifest,
+    run_preflight,
     validate_runtime_readiness,
 )
+from service_catalog import ServiceCatalog
 
 
 def _create_valid_inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -65,6 +69,37 @@ def _pipeline_config(tmp_path: Path, *, review_enabled: bool) -> PipelineConfig:
         airtable=AirtableConfig("secret", "appBase1", "tblAppointments1", "tblCats1"),
         review_enabled=review_enabled,
     )
+
+
+def _integrated_config(tmp_path: Path, *, catalog_path: Path) -> PipelineConfig:
+    """Build complete noninteractive settings for integrated preflight tests."""
+    return PipelineConfig(
+        run_date=date(2026, 9, 3),
+        inputs=InputPaths(tmp_path / "inputs", catalog_path),
+        output_dir=tmp_path / "outputs",
+        airtable=AirtableConfig("secret", "appBase1", "tblAppointments1", "tblCats1"),
+        review_enabled=False,
+    )
+
+
+def _write_minimal_catalog(path: Path) -> None:
+    """Write a complete two-field service catalog for integrated tests."""
+    catalog = {
+        "format_version": "1.0",
+        "services": [
+            {
+                "airtable_field_name": "Services",
+                "airtable_service_option": "Spay / Neuter",
+                "recognized_invoice_descriptions": ["Cat Spay"],
+            },
+            {
+                "airtable_field_name": "Additional Services",
+                "airtable_service_option": "Pregnant",
+                "recognized_invoice_descriptions": ["Pregnant surcharge"],
+            },
+        ],
+    }
+    path.write_text(json.dumps(catalog), encoding="utf-8")
 
 
 def test_discovers_manifest_and_one_invoice_without_changes(tmp_path: Path) -> None:
@@ -311,3 +346,98 @@ def test_review_accepts_terminal_and_pdf_viewer(
     monkeypatch.setattr(preflight.shutil, "which", lambda _command: "/usr/bin/open")
 
     assert validate_runtime_readiness(_pipeline_config(tmp_path, review_enabled=True)) is None
+
+
+def test_integrated_preflight_returns_complete_state_and_starts_log(tmp_path: Path) -> None:
+    """Return aligned prerequisites and log success before any numbered stage begins."""
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    _write_valid_manifest(input_dir)
+    (input_dir / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    catalog_path = tmp_path / "service_catalog.json"
+    _write_minimal_catalog(catalog_path)
+    config = _integrated_config(tmp_path, catalog_path=catalog_path)
+
+    result = run_preflight(
+        config,
+        started_at=datetime(2026, 9, 13, 14, 30, tzinfo=timezone.utc),
+    )
+
+    assert isinstance(result, PreflightResult)
+    assert isinstance(result.service_catalog, ServiceCatalog)
+    assert result.manifest.run_date == config.run_date
+    assert result.output_plan.log_path.is_file()
+    assert "Validated 1 treatment sheet(s)." in result.output_plan.log_path.read_text(
+        encoding="utf-8"
+    )
+    assert not result.output_plan.run_directory.exists()
+
+
+def test_integrated_preflight_failure_creates_no_output(tmp_path: Path) -> None:
+    """Leave no log or run directory when a late read-only prerequisite is malformed."""
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    _write_valid_manifest(input_dir)
+    (input_dir / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    catalog_path = tmp_path / "service_catalog.json"
+    catalog_path.write_text("{}", encoding="utf-8")
+    config = _integrated_config(tmp_path, catalog_path=catalog_path)
+
+    with pytest.raises(PipelineError, match="service catalog must contain exactly"):
+        run_preflight(config)
+
+    assert not config.output_dir.exists()
+
+
+def test_integrated_preflight_rejects_input_identity_mismatch(tmp_path: Path) -> None:
+    """Reject a configuration whose source files belong to another input directory."""
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    _write_valid_manifest(input_dir)
+    (input_dir / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    catalog_path = tmp_path / "service_catalog.json"
+    _write_minimal_catalog(catalog_path)
+    config = _integrated_config(tmp_path, catalog_path=catalog_path)
+    result = run_preflight(config)
+    other_config = PipelineConfig(
+        run_date=config.run_date,
+        inputs=InputPaths(tmp_path / "other-inputs", catalog_path),
+        output_dir=config.output_dir,
+        airtable=config.airtable,
+        review_enabled=False,
+    )
+
+    with pytest.raises(PipelineError, match="must belong to the configured directory"):
+        PreflightResult(
+            other_config,
+            result.input_files,
+            result.manifest,
+            result.service_catalog,
+            result.output_plan,
+        )
+
+
+def test_integrated_preflight_rejects_output_identity_mismatch(tmp_path: Path) -> None:
+    """Reject a future run directory derived from a different run identity."""
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    _write_valid_manifest(input_dir)
+    (input_dir / "clinic invoice.pdf").write_bytes(b"%PDF-placeholder")
+    catalog_path = tmp_path / "service_catalog.json"
+    _write_minimal_catalog(catalog_path)
+    config = _integrated_config(tmp_path, catalog_path=catalog_path)
+    result = run_preflight(config)
+    mismatched_plan = OutputPlan(
+        result.output_plan.output_dir,
+        result.output_plan.output_dir / "26SEP04-NLF",
+        result.output_plan.log_path,
+    )
+
+    with pytest.raises(PipelineError, match="must match the configured run ID"):
+        PreflightResult(
+            result.config,
+            result.input_files,
+            result.manifest,
+            result.service_catalog,
+            mismatched_plan,
+        )
