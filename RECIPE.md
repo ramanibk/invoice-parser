@@ -143,7 +143,7 @@ Stage 2: Treatment-sheet extraction
 Stage 2 complete.
 
 Stage 3: Invoice-to-treatment-sheet mapping
-[ok] 2 appointment(s) matched one-to-one
+[ok] 2 latest appointment(s) matched one-to-one
 [ok] Invoice services mapped to Airtable service names
 [ok] Extraction artifact published: /path/to/bac-outputs/26SEP03-NLF/extraction.json
 
@@ -165,10 +165,12 @@ normalization, and every manifest cat name to occur as a contiguous whole-token 
 display name. A malformed sheet or identity mismatch stops the batch without creating a run
 directory.
 
-Stage 3 requires every treatment-sheet appointment to match exactly one unused invoice appointment
-by service date, contiguous whole-token cat name, and normalized owner tokens. The manifest's
-explicit `N/A` owner sentinel does not constrain the invoice owner. Every invoice appointment must
-be consumed, and every invoice service description must exist in the validated service catalog.
+Stage 3 requires each cat's latest treatment-sheet appointment to match exactly one unused invoice
+appointment by service date, contiguous whole-token cat name, and normalized owner tokens. Earlier
+treatment-sheet appointments remain in the extraction as informational history with empty services
+and a null total. The manifest's explicit `N/A` owner sentinel does not constrain the invoice owner.
+Every invoice appointment must be consumed, and every invoice service description must exist in the
+validated service catalog.
 Only after the complete match succeeds does the pipeline create the run directory and atomically
 write `extraction.json`; matching or publication failures never leave a partial artifact.
 

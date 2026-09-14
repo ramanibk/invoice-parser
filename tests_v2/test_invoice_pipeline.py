@@ -159,7 +159,7 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Stage 2: Treatment-sheet extraction" in captured.out
     assert "1 treatment sheet(s) parsed and identity-checked" in captured.out
     assert "Stage 3: Invoice-to-treatment-sheet mapping" in captured.out
-    assert "1 appointment(s) matched one-to-one" in captured.out
+    assert "1 latest appointment(s) matched one-to-one" in captured.out
     assert "Extraction artifact published:" in captured.out
     assert "Stage 4: Airtable retrieval" in captured.out
     assert "Stage 5: Codex cat matching" in captured.out
@@ -183,6 +183,7 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert "Stage 1 invoice extraction passed." in log_text
     assert "Stage 2 treatment-sheet extraction passed." in log_text
     assert "Stage 3 invoice-to-treatment-sheet mapping passed." in log_text
+    assert "Matched 1 latest appointment(s) one-to-one." in log_text
     assert review_calls == [
         (input_dir / "clinic-invoice.pdf", "invoice", False),
         (

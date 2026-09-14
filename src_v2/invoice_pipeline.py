@@ -178,18 +178,22 @@ def _run_invoice_treatment_mapping(
     invoice: Invoice,
     treatment_cats: tuple[TreatmentCat, ...],
 ) -> tuple[ExtractionCat, ...]:
-    """Match all extracted visits, map services, and log the completed stage."""
+    """Match each latest visit, retain history, and log the completed stage."""
     extraction_cats = match_invoice_to_treatment_sheets(
         invoice,
         treatment_cats,
         preflight.service_catalog,
     )
-    appointment_count = sum(len(cat.appointments) for cat in extraction_cats)
+    appointment_count = sum(
+        appointment.total_cost is not None
+        for cat in extraction_cats
+        for appointment in cat.appointments
+    )
     append_pipeline_log(
         preflight.output_plan,
         (
             "Stage 3 invoice-to-treatment-sheet mapping passed.",
-            f"Matched {appointment_count} appointment(s) one-to-one.",
+            f"Matched {appointment_count} latest appointment(s) one-to-one.",
         ),
         sensitive_values=(preflight.config.airtable.token,),
     )
@@ -200,9 +204,13 @@ def _print_mapping_result(
     extraction_cats: tuple[ExtractionCat, ...],
 ) -> None:
     """Print the invoice-to-treatment mapping summary."""
-    appointment_count = sum(len(cat.appointments) for cat in extraction_cats)
+    appointment_count = sum(
+        appointment.total_cost is not None
+        for cat in extraction_cats
+        for appointment in cat.appointments
+    )
     print("\nStage 3: Invoice-to-treatment-sheet mapping")
-    print(f"[ok] {appointment_count} appointment(s) matched one-to-one")
+    print(f"[ok] {appointment_count} latest appointment(s) matched one-to-one")
     print("[ok] Invoice services mapped to Airtable service names")
     print("\nStage 3 complete.")
 

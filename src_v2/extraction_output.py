@@ -107,7 +107,11 @@ def _build_appointment_payload(
             service.airtable_name: float(service.cost)
             for service in extraction_appointment.services
         },
-        "total_cost": _money(extraction_appointment.total_cost),
+        "total_cost": (
+            None
+            if extraction_appointment.total_cost is None
+            else _money(extraction_appointment.total_cost)
+        ),
     }
 
 

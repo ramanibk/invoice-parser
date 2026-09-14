@@ -86,6 +86,37 @@ def test_builds_complete_extraction_document(tmp_path: Path) -> None:
     assert not plan.run_directory.exists()
 
 
+def test_serializes_historical_appointment_without_invoice_values(tmp_path: Path) -> None:
+    """Emit treatment history with empty services and a null invoice total."""
+    current = _extraction_cat()
+    historical = TreatmentSheetAppointment(date(2026, 1, 23), "Female", None, "Black", None)
+    treatment_cat = TreatmentCat(
+        current.treatment_cat.cat_id,
+        current.treatment_cat.display_name,
+        current.treatment_cat.cat_name,
+        current.treatment_cat.owner_name,
+        (historical, *current.treatment_cat.appointments),
+    )
+    extraction_cat = ExtractionCat(
+        treatment_cat,
+        (ExtractionAppointment(historical, (), None), *current.appointments),
+    )
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+
+    payload = build_extraction_payload(
+        _plan(output_dir),
+        (tmp_path / "inputs" / "manifest.json").resolve(),
+        date(2026, 9, 3),
+        (extraction_cat,),
+        _invoice((tmp_path / "inputs" / "invoice.pdf").resolve()),
+    )
+
+    visit = payload["cats"][0]["appointments"]["2026-01-23"]
+    assert visit["services"] == {}
+    assert visit["total_cost"] is None
+
+
 def test_rejects_malformed_records_without_creating_run_directory(tmp_path: Path) -> None:
     """Leave no run directory when publication receives an incomplete record set."""
     output_dir = tmp_path / "outputs"

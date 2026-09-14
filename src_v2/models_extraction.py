@@ -5,7 +5,12 @@ from decimal import Decimal
 
 from errors import PipelineError
 from models_treatment_sheet import TreatmentCat, TreatmentSheetAppointment
-from models_validation import _require_money, _require_non_empty_tuple_of, _require_text
+from models_validation import (
+    _require_money,
+    _require_non_empty_tuple_of,
+    _require_text,
+    _require_tuple_of,
+)
 
 
 @dataclass(frozen=True)
@@ -23,23 +28,29 @@ class AirtableService:
 
 @dataclass(frozen=True)
 class ExtractionAppointment:
-    """Combine one treatment appointment with its invoice billing values."""
+    """Combine one treatment appointment with optional invoice billing values."""
 
     treatment_appointment: TreatmentSheetAppointment
     services: tuple[AirtableService, ...]
-    total_cost: Decimal
+    total_cost: Decimal | None
 
     def __post_init__(self) -> None:
-        """Require a treatment visit, mapped services, and exact invoice total."""
+        """Require complete billing values together or omit both for history."""
         if not isinstance(self.treatment_appointment, TreatmentSheetAppointment):
             raise PipelineError("extraction appointment must contain a TreatmentSheetAppointment")
-        _require_non_empty_tuple_of(self.services, AirtableService, "extraction services")
+        services = _require_tuple_of(self.services, AirtableService, "extraction services")
+        if self.total_cost is None:
+            if services:
+                raise PipelineError("unbilled extraction appointment cannot contain services")
+            return
+        if not services:
+            raise PipelineError("billed extraction appointment must contain services")
         _require_money(self.total_cost, "extraction appointment total")
 
 
 @dataclass(frozen=True)
 class ExtractionCat:
-    """Store one treatment cat after every visit has matched the invoice."""
+    """Store one treatment cat after its latest visit has matched the invoice."""
 
     treatment_cat: TreatmentCat
     appointments: tuple[ExtractionAppointment, ...]

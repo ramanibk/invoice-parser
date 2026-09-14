@@ -79,6 +79,29 @@ def test_matches_identity_and_maps_canonical_services(tmp_path: Path) -> None:
     assert visit.total_cost == Decimal("125.00")
 
 
+def test_requires_invoice_only_for_latest_treatment_appointment(tmp_path: Path) -> None:
+    """Retain an older treatment visit without requiring invoice billing values."""
+    historical = TreatmentSheetAppointment(date(2026, 1, 23), "Female", None, "Black", None)
+    latest = TreatmentSheetAppointment(date(2026, 9, 3), "Female", None, "Black", None)
+    treatment_cat = TreatmentCat(
+        "26SEP03-NLF-1",
+        "Sample Cat",
+        "Sample Cat",
+        "Sample Owner",
+        (historical, latest),
+    )
+    invoice = _invoice(tmp_path / "invoice.pdf", (_invoice_appointment(),))
+
+    extraction_cats = match_invoice_to_treatment_sheets(invoice, (treatment_cat,), _catalog())
+
+    historical_result, latest_result = extraction_cats[0].appointments
+    assert historical_result.treatment_appointment is historical
+    assert historical_result.services == ()
+    assert historical_result.total_cost is None
+    assert latest_result.treatment_appointment is latest
+    assert latest_result.total_cost == Decimal("125.00")
+
+
 def test_allows_unknown_owner_sentinel(tmp_path: Path) -> None:
     """Allow an N/A treatment owner when date and cat identity match."""
     invoice = _invoice(tmp_path / "invoice.pdf", (_invoice_appointment(),))

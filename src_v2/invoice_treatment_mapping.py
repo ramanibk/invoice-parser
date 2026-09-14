@@ -16,7 +16,7 @@ def match_invoice_to_treatment_sheets(
     treatment_cats: tuple[TreatmentCat, ...],
     service_catalog: ServiceCatalog,
 ) -> tuple[ExtractionCat, ...]:
-    """Return a complete one-to-one invoice and treatment-sheet reconciliation."""
+    """Match each cat's latest treatment visit and preserve earlier history."""
     _validate_inputs(invoice, treatment_cats, service_catalog)
     service_by_invoice_name = _build_service_map(service_catalog)
     # Track positions rather than value equality so even identical-looking
@@ -31,8 +31,8 @@ def match_invoice_to_treatment_sheets(
         )
         for treatment_cat in treatment_cats
     )
-    # Treatment-driven matching proves each sheet visit has an invoice visit;
-    # this reverse count proves no invoice visit was left unmatched.
+    # Latest-visit matching proves each cat has an invoice visit; this reverse
+    # count proves no invoice visit was left unmatched.
     if len(used_invoice_indexes) != len(invoice.appointments):
         raise PipelineError("invoice contains appointments not present in treatment sheets")
     return extraction_cats
@@ -60,7 +60,11 @@ def _match_treatment_cat(
     used_invoice_indexes: set[int],
     service_by_invoice_name: Mapping[str, ServiceCatalogEntry],
 ) -> ExtractionCat:
-    """Match all visits for one treatment-sheet cat without mutating either source."""
+    """Match the latest visit and retain earlier visits without billing values."""
+    latest_appointment = max(
+        treatment_cat.appointments,
+        key=lambda appointment: appointment.service_date,
+    )
     extraction_appointments = tuple(
         _match_treatment_appointment(
             treatment_cat,
@@ -69,6 +73,8 @@ def _match_treatment_cat(
             used_invoice_indexes,
             service_by_invoice_name,
         )
+        if treatment_appointment is latest_appointment
+        else ExtractionAppointment(treatment_appointment, (), None)
         for treatment_appointment in treatment_cat.appointments
     )
     return ExtractionCat(treatment_cat, extraction_appointments)
