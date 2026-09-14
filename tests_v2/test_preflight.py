@@ -156,6 +156,33 @@ def test_rejects_missing_invoice(tmp_path: Path) -> None:
         discover_run_input_files(tmp_path)
 
 
+def test_discovers_nlf_invoice_filename(tmp_path: Path) -> None:
+    """Recognize the dated invoice number, location, and total filename format."""
+    manifest_path = tmp_path / "manifest.json"
+    invoice_path = tmp_path / "2026-09-02 5100 Nine Lives Foundation $505.00.pdf"
+    manifest_path.write_text("{}", encoding="utf-8")
+    invoice_path.write_bytes(b"%PDF-placeholder")
+
+    assert discover_run_input_files(tmp_path) == RunInputFiles(manifest_path, invoice_path)
+
+
+@pytest.mark.parametrize(
+    "invoice_name",
+    [
+        "2026-09-02 Nine Lives Foundation $505.00.pdf",
+        "2026-09-02 5100 Nine Lives Foundation 505.00.pdf",
+        "2026-09-02 5100 Nine Lives Foundation $505.pdf",
+    ],
+)
+def test_rejects_malformed_nlf_invoice_filename(tmp_path: Path, invoice_name: str) -> None:
+    """Reject NLF-like filenames missing a required invoice identity component."""
+    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / invoice_name).write_bytes(b"%PDF-placeholder")
+
+    with pytest.raises(PipelineError, match="invoice-named PDF; found 0"):
+        discover_run_input_files(tmp_path)
+
+
 def test_rejects_ambiguous_invoices(tmp_path: Path) -> None:
     """Reject multiple invoice PDF candidates instead of guessing between them."""
     (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")

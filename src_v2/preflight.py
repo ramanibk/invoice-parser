@@ -21,6 +21,10 @@ from service_catalog import ServiceCatalog, load_service_catalog
 
 MANIFEST_KEYS = frozenset({"date", "treatmentSheets"})
 MANIFEST_ENTRY_KEYS = frozenset({"owner", "catName", "fileName"})
+NLF_INVOICE_FILENAME_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2} \d+ Nine Lives Foundation \$\d+(?:,\d{3})*\.\d{2}\.pdf",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -338,7 +342,8 @@ def _require_readable_file(path: Path, description: str) -> None:
 
 def _is_invoice_pdf(path: Path) -> bool:
     """Return whether a filename identifies an invoice PDF candidate."""
-    return path.suffix.casefold() == ".pdf" and "invoice" in path.name.casefold()
+    legacy_name = path.suffix.casefold() == ".pdf" and "invoice" in path.name.casefold()
+    return legacy_name or NLF_INVOICE_FILENAME_PATTERN.fullmatch(path.name) is not None
 
 
 def _require_absolute_path(value: object, field_name: str) -> None:
