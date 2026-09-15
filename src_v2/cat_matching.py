@@ -14,8 +14,18 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 INVARIANTS_PATH = PROJECT_DIR / "src" / "prompts" / "invariants.md"
 INSTRUCTIONS_PATH = PROJECT_DIR / "src" / "prompts" / "cat_matching_instructions.md"
 OUTPUT_SCHEMA_PATH = Path(__file__).with_name("cat_matching_output.schema.json")
-MAPPING_FILENAME = "cat_mapping.json"
+MATCHES_FILENAME = "cat_matches.json"
 REVIEW_FILENAME = "cat_match_review.json"
+
+MATCH_FIELDS = {
+    "paperwork_cat_id",
+    "paperwork_display_name",
+    "airtable_cat_id",
+    "airtable_display_name",
+    "match_reason",
+}
+REVIEW_FIELDS = MATCH_FIELDS | {"review_kind", "resolution"}
+REVIEW_KINDS = {"unresolved_paperwork", "unassigned_airtable", "bounded_cohort"}
 
 Executor = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -24,12 +34,12 @@ def run_codex_cat_matching(
     run_directory: Path, *, executor: Executor = subprocess.run
 ) -> tuple[Path, Path, int]:
     """Run read-only Codex matching, validate it, and publish both result files."""
-    extraction_path = run_directory / "extraction.json"
+    paperwork_path = run_directory / "extraction.json"
     needs_invoice_path = run_directory / "needs_invoice.json"
-    extraction = _load_object(extraction_path, "extraction")
+    paperwork = _load_object(paperwork_path, "paperwork snapshot")
     needs_invoice = _load_object(needs_invoice_path, "Airtable snapshot")
     # Validate the frozen state before paying for or exposing data to a model.
-    _validate_input_identity(run_directory, extraction, needs_invoice)
+    _validate_input_identity(run_directory, paperwork, needs_invoice)
     _require_instruction_files()
     command = (
         "codex",
@@ -48,7 +58,7 @@ def run_codex_cat_matching(
         # cannot be interpreted as shell syntax.
         result = executor(
             command,
-            input=_matching_prompt(extraction_path, needs_invoice_path),
+            input=_matching_prompt(paperwork_path, needs_invoice_path),
             text=True,
             capture_output=True,
             check=False,
@@ -57,26 +67,26 @@ def run_codex_cat_matching(
     except (OSError, subprocess.SubprocessError) as exc:
         raise PipelineError(f"could not run Codex cat matching: {exc}") from exc
     if result.returncode != 0:
-        # Do not relay stderr; it may contain model progress or source identities.
-        raise PipelineError("Codex cat matching failed")
+        raise PipelineError(_codex_failure_message(result.stderr))
     output = _decode_codex_output(result.stdout)
-    mapping, review = _validate_output(output, extraction, needs_invoice)
-    mapping_path, review_path = _publish_outputs(run_directory, mapping, review)
-    return mapping_path, review_path, len(review)
+    matches, review_items = _validate_output(output, paperwork, needs_invoice)
+    matches_path, review_path = _publish_outputs(run_directory, matches, review_items)
+    return matches_path, review_path, len(review_items)
 
 
-def _matching_prompt(extraction_path: Path, needs_invoice_path: Path) -> str:
+def _matching_prompt(paperwork_path: Path, needs_invoice_path: Path) -> str:
     """Build a path-specific prompt that preserves the shared AI invariants."""
-    return f"""Match the extraction cats to the Airtable cats for this run.
+    return f"""Match the paperwork cats to the Airtable cats for this run.
 
 Read and follow {INVARIANTS_PATH} before beginning.
 Read and follow {INSTRUCTIONS_PATH} for matching rules and evidence priorities.
-Read the authoritative extraction snapshot at {extraction_path}.
+Read the authoritative paperwork snapshot at {paperwork_path}.
 Read the authoritative Airtable snapshot at {needs_invoice_path}.
 
 Do not modify any file or Airtable record. Return one JSON object with exactly two keys:
-`cat_mapping` containing the complete cat_mapping.json object and `cat_match_review` containing
-the complete cat_match_review.json object. Validate both conceptual artifacts before returning.
+`matches` containing every accepted match and `review_items` containing every item that requires
+operator review. Use paperwork terminology for identities originating in extraction.json.
+Validate the complete response before returning it.
 Costs and services are supporting evidence only and never override a conflicting strong identity.
 """
 
@@ -102,13 +112,27 @@ def _decode_codex_output(value: str) -> dict[str, Any]:
     return document
 
 
+def _codex_failure_message(stderr: str | None) -> str:
+    """Return a safe diagnostic without relaying model progress or source identities."""
+    safe_failures = (
+        ("invalid_json_schema", "Codex cat matching failed: invalid output schema"),
+        ("authentication", "Codex cat matching failed: authentication error"),
+        ("rate_limit", "Codex cat matching failed: rate limit exceeded"),
+    )
+    normalized = (stderr or "").lower()
+    for marker, message in safe_failures:
+        if marker in normalized:
+            return message
+    return "Codex cat matching failed"
+
+
 def _validate_input_identity(
-    run_directory: Path, extraction: dict[str, Any], needs_invoice: dict[str, Any]
+    run_directory: Path, paperwork: dict[str, Any], needs_invoice: dict[str, Any]
 ) -> None:
     """Require both authoritative snapshots to describe the selected run."""
-    parameters = extraction.get("input_parameters")
-    if extraction.get("run_id") != run_directory.name or not isinstance(parameters, dict):
-        raise PipelineError("extraction identity does not match its run directory")
+    parameters = paperwork.get("input_parameters")
+    if paperwork.get("run_id") != run_directory.name or not isinstance(parameters, dict):
+        raise PipelineError("paperwork snapshot identity does not match its run directory")
     expected = (parameters.get("date"), parameters.get("vet"))
     actual = (needs_invoice.get("date"), needs_invoice.get("location_code"))
     if actual != expected:
@@ -123,145 +147,199 @@ def _require_instruction_files() -> None:
 
 
 def _validate_output(
-    output: dict[str, Any], extraction: dict[str, Any], needs_invoice: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    output: dict[str, Any], paperwork: dict[str, Any], needs_invoice: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Validate structure, identities, names, uniqueness, and complete coverage."""
-    if set(output) != {"cat_mapping", "cat_match_review"}:
-        raise PipelineError("Codex output must contain only cat_mapping and cat_match_review")
-    mapping = _require_object(output["cat_mapping"], "cat_mapping")
-    review = _require_object(output["cat_match_review"], "cat_match_review")
-    # The JSON schema checks shape; these indexes enable source-aware checks that
-    # a static schema cannot express.
-    extraction_cats = _index_cats(extraction, "cat_id", "extraction")
+    if set(output) != {"matches", "review_items"}:
+        raise PipelineError("Codex output must contain only matches and review_items")
+    matches = _require_array(output["matches"], "matches")
+    review_items = _require_array(output["review_items"], "review_items")
+    paperwork_cats = _index_cats(paperwork, "cat_id", "paperwork snapshot")
     airtable_cats = _index_cats(needs_invoice, "airtable_cat_id", "Airtable snapshot")
-    _validate_mapping(mapping, extraction_cats, airtable_cats)
-    _validate_review(review, mapping, extraction_cats, airtable_cats)
-    _validate_coverage(mapping, review, extraction_cats, airtable_cats)
-    return mapping, review
+    indexed_matches = _validate_matches(matches, paperwork_cats, airtable_cats)
+    _validate_review_items(review_items, indexed_matches, paperwork_cats, airtable_cats)
+    _validate_coverage(indexed_matches, review_items, paperwork_cats, airtable_cats)
+    return matches, review_items
 
 
-def _validate_mapping(
-    mapping: dict[str, Any],
-    extraction: dict[str, dict[str, Any]],
+def _validate_matches(
+    values: list[object],
+    paperwork: dict[str, dict[str, Any]],
     airtable: dict[str, dict[str, Any]],
-) -> None:
-    """Require every confident match to reference exact source identities and names."""
+) -> dict[str, dict[str, Any]]:
+    """Validate accepted matches and index them by paperwork identity."""
+    indexed: dict[str, dict[str, Any]] = {}
     assigned: set[str] = set()
-    for cat_id, value in mapping.items():
-        if cat_id not in extraction:
-            raise PipelineError("cat_mapping contains an unknown extraction cat")
-        entry = _match_entry(value, review=False)
-        airtable_id = cast(str, entry["airtable_id"])
-        # One-to-one assignment prevents two extraction cats from silently
-        # targeting the same Airtable cat.
+    for value in values:
+        entry = _match_entry(value)
+        paperwork_id = cast(str, entry["paperwork_cat_id"])
+        airtable_id = cast(str, entry["airtable_cat_id"])
+        if paperwork_id not in paperwork or paperwork_id in indexed:
+            raise PipelineError("matches contains an unknown or duplicate paperwork cat")
         if airtable_id not in airtable or airtable_id in assigned:
-            raise PipelineError("cat_mapping contains an unknown or duplicate Airtable cat")
-        _require_source_names(entry, extraction[cat_id], airtable[airtable_id])
+            raise PipelineError("matches contains an unknown or duplicate Airtable cat")
+        _require_source_names(entry, paperwork[paperwork_id], airtable[airtable_id])
+        indexed[paperwork_id] = entry
         assigned.add(airtable_id)
+    return indexed
 
 
-def _validate_review(
-    review: dict[str, Any],
-    mapping: dict[str, Any],
-    extraction: dict[str, dict[str, Any]],
+def _validate_review_items(
+    values: list[object],
+    matches: dict[str, dict[str, Any]],
+    paperwork: dict[str, dict[str, Any]],
     airtable: dict[str, dict[str, Any]],
 ) -> None:
-    """Validate every extraction-keyed or Airtable-keyed review record."""
-    for record_id, value in review.items():
-        entry = _match_entry(value, review=True)
-        if record_id in extraction:
-            _validate_extraction_review(record_id, entry, mapping, extraction)
-        elif record_id in airtable:
-            _validate_airtable_review(record_id, entry, airtable)
-        else:
-            raise PipelineError("cat_match_review contains an unknown identity")
+    """Validate every typed review item and reject duplicates."""
+    seen: set[tuple[object, object, object]] = set()
+    for value in values:
+        entry = _review_entry(value)
+        _validate_review_item(entry, matches, paperwork, airtable)
+        identity = (
+            entry["review_kind"],
+            entry["paperwork_cat_id"],
+            entry["airtable_cat_id"],
+        )
+        if identity in seen:
+            raise PipelineError("review_items contains a duplicate item")
+        seen.add(identity)
 
 
-def _validate_extraction_review(
-    cat_id: str,
+def _validate_review_item(
     entry: dict[str, Any],
-    mapping: dict[str, Any],
-    extraction: dict[str, dict[str, Any]],
+    matches: dict[str, dict[str, Any]],
+    paperwork: dict[str, dict[str, Any]],
+    airtable: dict[str, dict[str, Any]],
 ) -> None:
-    """Validate unresolved or bounded-cohort extraction review entries."""
-    if entry["extraction_cat_display_name"] != extraction[cat_id].get("display_name"):
-        raise PipelineError("cat_match_review has an incorrect extraction display name")
-    if cat_id in mapping:
-        # Bounded-cohort matches intentionally appear in both artifacts; their
-        # review copy must be byte-for-byte equivalent apart from resolution.
-        expected = {**mapping[cat_id], "resolution": ""}
-        if entry != expected:
-            raise PipelineError("bounded-cohort review must copy its cat_mapping entry")
-    elif entry["airtable_id"] is not None or entry["airtable_display_name"] is not None:
-        raise PipelineError("unresolved extraction review must have null Airtable fields")
+    """Dispatch one review item to its kind-specific identity checks."""
+    kind = entry["review_kind"]
+    if kind == "unresolved_paperwork":
+        _validate_unresolved_paperwork(entry, matches, paperwork)
+    elif kind == "unassigned_airtable":
+        _validate_unassigned_airtable(entry, matches, airtable)
+    else:
+        _validate_bounded_cohort(entry, matches, paperwork, airtable)
 
 
-def _validate_airtable_review(
-    airtable_id: str, entry: dict[str, Any], airtable: dict[str, dict[str, Any]]
+def _validate_unresolved_paperwork(
+    entry: dict[str, Any],
+    matches: dict[str, dict[str, Any]],
+    paperwork: dict[str, dict[str, Any]],
 ) -> None:
-    """Validate one unassigned Airtable cat review entry."""
-    if entry["extraction_cat_display_name"] is not None or entry["airtable_id"] != airtable_id:
-        raise PipelineError("unassigned Airtable review has inconsistent identities")
+    """Require an unresolved item to identify only a known paperwork cat."""
+    paperwork_id = entry["paperwork_cat_id"]
+    if not isinstance(paperwork_id, str) or paperwork_id not in paperwork:
+        raise PipelineError("unresolved review contains an unknown paperwork cat")
+    if paperwork_id in matches:
+        raise PipelineError("accepted paperwork match cannot be unresolved")
+    if entry["airtable_cat_id"] is not None or entry["airtable_display_name"] is not None:
+        raise PipelineError("unresolved paperwork review must have null Airtable fields")
+    if entry["paperwork_display_name"] != paperwork[paperwork_id].get("display_name"):
+        raise PipelineError("review item has an incorrect paperwork display name")
+
+
+def _validate_unassigned_airtable(
+    entry: dict[str, Any],
+    matches: dict[str, dict[str, Any]],
+    airtable: dict[str, dict[str, Any]],
+) -> None:
+    """Require an unassigned item to identify only a known Airtable cat."""
+    airtable_id = entry["airtable_cat_id"]
+    if not isinstance(airtable_id, str) or airtable_id not in airtable:
+        raise PipelineError("unassigned review contains an unknown Airtable cat")
+    assigned = {match["airtable_cat_id"] for match in matches.values()}
+    if airtable_id in assigned:
+        raise PipelineError("accepted Airtable match cannot be unassigned")
+    if entry["paperwork_cat_id"] is not None or entry["paperwork_display_name"] is not None:
+        raise PipelineError("unassigned Airtable review must have null paperwork fields")
     if entry["airtable_display_name"] != airtable[airtable_id].get("cat_name"):
-        raise PipelineError("unassigned Airtable review has an incorrect display name")
+        raise PipelineError("review item has an incorrect Airtable display name")
+
+
+def _validate_bounded_cohort(
+    entry: dict[str, Any],
+    matches: dict[str, dict[str, Any]],
+    paperwork: dict[str, dict[str, Any]],
+    airtable: dict[str, dict[str, Any]],
+) -> None:
+    """Require a bounded-cohort review item to copy one accepted match."""
+    paperwork_id = entry["paperwork_cat_id"]
+    airtable_id = entry["airtable_cat_id"]
+    if not isinstance(paperwork_id, str) or not isinstance(airtable_id, str):
+        raise PipelineError("bounded-cohort review must contain both cat identities")
+    if paperwork_id not in paperwork or airtable_id not in airtable:
+        raise PipelineError("bounded-cohort review contains an unknown identity")
+    expected = matches.get(paperwork_id)
+    copied_match = {name: entry[name] for name in MATCH_FIELDS}
+    if expected != copied_match:
+        raise PipelineError("bounded-cohort review must copy its accepted match")
 
 
 def _validate_coverage(
-    mapping: dict[str, Any],
-    review: dict[str, Any],
-    extraction: dict[str, dict[str, Any]],
+    matches: dict[str, dict[str, Any]],
+    review_items: list[dict[str, Any]],
+    paperwork: dict[str, dict[str, Any]],
     airtable: dict[str, dict[str, Any]],
 ) -> None:
     """Require every source cat to be assigned or represented for review."""
-    # No cat from either authoritative input may disappear merely because Codex
-    # was uncertain or failed to mention it.
-    if not set(extraction).issubset(mapping.keys() | review.keys()):
-        raise PipelineError("Codex output does not cover every extraction cat")
-    assigned = {cast(dict[str, Any], entry)["airtable_id"] for entry in mapping.values()}
-    if not set(airtable).issubset(assigned | review.keys()):
+    unresolved = {
+        item["paperwork_cat_id"]
+        for item in review_items
+        if item["review_kind"] == "unresolved_paperwork"
+    }
+    unassigned = {
+        item["airtable_cat_id"]
+        for item in review_items
+        if item["review_kind"] == "unassigned_airtable"
+    }
+    if set(paperwork) != matches.keys() | unresolved:
+        raise PipelineError("Codex output does not cover every paperwork cat")
+    assigned = {entry["airtable_cat_id"] for entry in matches.values()}
+    if set(airtable) != assigned | unassigned:
         raise PipelineError("Codex output does not cover every Airtable cat")
 
 
-def _match_entry(value: object, *, review: bool) -> dict[str, Any]:
-    """Validate one mapping or review entry's exact field contract."""
+def _match_entry(value: object) -> dict[str, Any]:
+    """Validate one accepted match's exact field contract."""
     entry = _require_object(value, "cat match entry")
-    fields = {"extraction_cat_display_name", "airtable_id", "airtable_display_name", "match_reason"}
-    expected = fields | ({"resolution"} if review else set())
-    if set(entry) != expected or not isinstance(entry.get("match_reason"), str):
+    if set(entry) != MATCH_FIELDS:
         raise PipelineError("cat match entry has invalid fields")
-    if not entry["match_reason"]:
-        raise PipelineError("cat match reason must be non-empty")
-    if review:
-        _validate_review_field_values(entry)
-    else:
-        _validate_mapping_field_values(entry, fields)
+    if any(not isinstance(entry[name], str) or not entry[name] for name in MATCH_FIELDS):
+        raise PipelineError("cat match fields must be non-empty strings")
     return entry
 
 
-def _validate_review_field_values(entry: dict[str, Any]) -> None:
-    """Require an empty resolution and nullable string identity fields."""
-    if entry["resolution"] != "":
-        raise PipelineError("cat match review resolution must be empty")
-    names = ("extraction_cat_display_name", "airtable_id", "airtable_display_name")
-    invalid = any(entry[name] is not None and not isinstance(entry[name], str) for name in names)
-    if invalid:
-        raise PipelineError("cat match review identity fields must be strings or null")
+def _review_entry(value: object) -> dict[str, Any]:
+    """Validate one operator-review item's exact field contract."""
+    entry = _require_object(value, "cat review item")
+    if set(entry) != REVIEW_FIELDS or entry.get("review_kind") not in REVIEW_KINDS:
+        raise PipelineError("cat review item has invalid fields")
+    if entry["resolution"] != "" or not _is_nonempty_string(entry["match_reason"]):
+        raise PipelineError("cat review item has invalid reason or resolution")
+    identity_fields = MATCH_FIELDS - {"match_reason"}
+    if any(not _is_optional_nonempty_string(entry[name]) for name in identity_fields):
+        raise PipelineError("cat review identity fields must be non-empty strings or null")
+    return entry
 
 
-def _validate_mapping_field_values(entry: dict[str, Any], fields: set[str]) -> None:
-    """Require every confident mapping field to be a non-empty string."""
-    if any(not isinstance(entry[name], str) or not entry[name] for name in fields):
-        raise PipelineError("cat_mapping fields must be non-empty strings")
+def _is_nonempty_string(value: object) -> bool:
+    """Return whether a value is a non-empty string."""
+    return isinstance(value, str) and bool(value)
+
+
+def _is_optional_nonempty_string(value: object) -> bool:
+    """Return whether a value is null or a non-empty string."""
+    return value is None or _is_nonempty_string(value)
 
 
 def _require_source_names(
-    entry: dict[str, Any], extraction: dict[str, Any], airtable: dict[str, Any]
+    entry: dict[str, Any], paperwork: dict[str, Any], airtable: dict[str, Any]
 ) -> None:
     """Require output display names to be copied exactly from source snapshots."""
-    if entry["extraction_cat_display_name"] != extraction.get("display_name"):
-        raise PipelineError("cat_mapping has an incorrect extraction display name")
+    if entry["paperwork_display_name"] != paperwork.get("display_name"):
+        raise PipelineError("match has an incorrect paperwork display name")
     if entry["airtable_display_name"] != airtable.get("cat_name"):
-        raise PipelineError("cat_mapping has an incorrect Airtable display name")
+        raise PipelineError("match has an incorrect Airtable display name")
 
 
 def _index_cats(document: dict[str, Any], key: str, description: str) -> dict[str, dict[str, Any]]:
@@ -282,6 +360,13 @@ def _require_object(value: object, description: str) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
+def _require_array(value: object, description: str) -> list[object]:
+    """Require and return one JSON array."""
+    if not isinstance(value, list):
+        raise PipelineError(f"{description} must be a JSON array")
+    return cast(list[object], value)
+
+
 def _load_object(path: Path, description: str) -> dict[str, Any]:
     """Load one authoritative input artifact as a JSON object."""
     try:
@@ -291,28 +376,30 @@ def _load_object(path: Path, description: str) -> dict[str, Any]:
 
 
 def _publish_outputs(
-    run_directory: Path, mapping: dict[str, Any], review: dict[str, Any]
+    run_directory: Path,
+    matches: list[dict[str, Any]],
+    review_items: list[dict[str, Any]],
 ) -> tuple[Path, Path]:
     """Publish both validated cat outputs and roll back a failed pair."""
-    mapping_path = run_directory / MAPPING_FILENAME
+    matches_path = run_directory / MATCHES_FILENAME
     review_path = run_directory / REVIEW_FILENAME
     temporary = (
-        run_directory / f".{MAPPING_FILENAME}.tmp",
+        run_directory / f".{MATCHES_FILENAME}.tmp",
         run_directory / f".{REVIEW_FILENAME}.tmp",
     )
-    if mapping_path.exists() or review_path.exists():
+    if matches_path.exists() or review_path.exists():
         raise PipelineError("cat matching artifacts already exist")
     try:
         # Both complete documents are staged before either public filename is
         # created. A later failure removes the whole newly created pair.
-        temporary[0].write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
-        temporary[1].write_text(json.dumps(review, indent=2) + "\n", encoding="utf-8")
-        temporary[0].replace(mapping_path)
+        temporary[0].write_text(json.dumps(matches, indent=2) + "\n", encoding="utf-8")
+        temporary[1].write_text(json.dumps(review_items, indent=2) + "\n", encoding="utf-8")
+        temporary[0].replace(matches_path)
         temporary[1].replace(review_path)
     except OSError as exc:
-        _remove_matching_outputs((*temporary, mapping_path, review_path))
+        _remove_matching_outputs((*temporary, matches_path, review_path))
         raise PipelineError("could not publish cat matching artifacts") from exc
-    return mapping_path, review_path
+    return matches_path, review_path
 
 
 def _remove_matching_outputs(paths: tuple[Path, ...]) -> None:

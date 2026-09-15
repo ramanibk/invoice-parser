@@ -49,8 +49,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_airtable_result(
             airtable_snapshot.linked_cat_count, extraction_path, needs_invoice_path
         )
-        mapping_path, review_path, review_count = _run_cat_matching(preflight)
-        _print_cat_matching_result(mapping_path, review_path, review_count)
+        matches_path, review_path, review_count = _run_cat_matching(preflight)
+        _print_cat_matching_result(matches_path, review_path, review_count)
     except PipelineError as exc:
         print(f"invoice-pipeline: error: {exc}", file=sys.stderr)
         return 1
@@ -273,10 +273,10 @@ def _run_cat_matching(preflight: PreflightResult) -> tuple[Path, Path, int]:
     return result
 
 
-def _print_cat_matching_result(mapping_path: Path, review_path: Path, review_count: int) -> None:
+def _print_cat_matching_result(matches_path: Path, review_path: Path, review_count: int) -> None:
     """Print matching artifact paths and the operator-review count."""
     print("\nStage 5: Codex cat matching")
-    print(f"[ok] Cat mapping published: {mapping_path}")
+    print(f"[ok] Cat matches published: {matches_path}")
     print(f"[ok] Cat match review published: {review_path}")
     print(f"[ok] {review_count} review entr{'y' if review_count == 1 else 'ies'}")
     print("\nStage 5 complete.")

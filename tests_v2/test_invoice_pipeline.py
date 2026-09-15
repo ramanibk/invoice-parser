@@ -47,11 +47,11 @@ def _replace_external_matching_stages(
 
     def match(run_directory: Path) -> tuple[Path, Path, int]:
         """Create representative validated outputs for orchestration tests."""
-        mapping = run_directory / "cat_mapping.json"
+        matches = run_directory / "cat_matches.json"
         review = run_directory / "cat_match_review.json"
-        mapping.write_text("{}\n", encoding="utf-8")
-        review.write_text("{}\n", encoding="utf-8")
-        return mapping, review, 0
+        matches.write_text("[]\n", encoding="utf-8")
+        review.write_text("[]\n", encoding="utf-8")
+        return matches, review, 0
 
     monkeypatch.setattr(invoice_pipeline, "run_codex_cat_matching", match)
 
@@ -172,7 +172,7 @@ def test_cli_runs_preflight_and_prints_complete_summary(
     assert artifact["cats"][0]["appointments"]["2026-09-03"]["services"] == {"Spay / Neuter": 125.0}
     assert artifact["invoice"]["total_cost"] == "125.00"
     assert (artifact_path.parent / "needs_invoice.json").is_file()
-    assert (artifact_path.parent / "cat_mapping.json").is_file()
+    assert (artifact_path.parent / "cat_matches.json").is_file()
     assert (artifact_path.parent / "cat_match_review.json").is_file()
     log_paths = tuple((output_dir / "logs").glob("*.log"))
     assert len(log_paths) == 1

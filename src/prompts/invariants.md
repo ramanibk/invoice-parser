@@ -35,7 +35,7 @@ Operator.
    work. Files MUST NOT be uploaded without explicit upload approval from the Processing Operator.
 6. **Files and filenames.** Source filenames and extensions MUST remain unchanged. Required local
    run artifacts MUST remain together in the applicable `../bac-outputs/[run-id]/` directory and use
-   their defined filenames, including `extraction.json`, `needs_invoice.json`, `cat_mapping.json`,
+   their defined filenames, including `extraction.json`, `needs_invoice.json`, `cat_matches.json`,
    and `cat_match_review.json`. Do not overwrite an existing artifact unless the applicable
    instructions or Processing Operator explicitly authorize replacement.
 7. **Identifiers and reporting.** Run-specific Airtable IDs MUST appear only in authorized local

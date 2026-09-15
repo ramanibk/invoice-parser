@@ -36,7 +36,7 @@ def test_first_pass_prompt_uses_newest_complete_paired_run(tmp_path) -> None:
 
     assert str(latest / "extraction.json") in prompt
     assert str(latest / "needs_invoice.json") in prompt
-    assert str(latest / "cat_mapping.json") in prompt
+    assert str(latest / "cat_matches.json") in prompt
     assert str(latest / "cat_match_review.json") in prompt
     assert "/src/prompts/invariants.md" in prompt
     assert "/src/prompts/cat_matching_instructions.md" in prompt
@@ -97,13 +97,13 @@ def test_resolution_prompt_requires_and_uses_existing_artifacts(tmp_path) -> Non
     """Generate the short resolution prompt only for valid existing JSON artifacts."""
     outputs = tmp_path / "outputs"
     run = _write_run(outputs)
-    (run / "cat_mapping.json").write_text("{}", encoding="utf-8")
-    (run / "cat_match_review.json").write_text("{}", encoding="utf-8")
+    (run / "cat_matches.json").write_text("[]", encoding="utf-8")
+    (run / "cat_match_review.json").write_text("[]", encoding="utf-8")
 
     prompt = generate_cat_mapping_prompt("2026-09-02", "NLF", outputs, resolve=True)
 
     assert "Resolve the cat matches" in prompt
-    assert str(run / "cat_mapping.json") in prompt
+    assert str(run / "cat_matches.json") in prompt
     assert str(run / "cat_match_review.json") in prompt
     assert "first-pass instructions" not in prompt
 
@@ -112,7 +112,7 @@ def test_resolution_prompt_rejects_missing_review(tmp_path) -> None:
     """Do not emit a resolution prompt before both first-pass artifacts exist."""
     outputs = tmp_path / "outputs"
     run = _write_run(outputs)
-    (run / "cat_mapping.json").write_text("{}", encoding="utf-8")
+    (run / "cat_matches.json").write_text("[]", encoding="utf-8")
 
     with pytest.raises(CatMappingPromptError, match="cat_match_review.json"):
         generate_cat_mapping_prompt("2026-09-02", "NLF", outputs, resolve=True)
@@ -123,10 +123,10 @@ def test_cli_prints_selected_prompt(tmp_path, capsys, flag) -> None:
     """Expose each prompt mode as an explicit command flag."""
     outputs = tmp_path / "outputs"
     run = _write_run(outputs)
-    (run / "cat_mapping.json").write_text("{}", encoding="utf-8")
-    (run / "cat_match_review.json").write_text("{}", encoding="utf-8")
+    (run / "cat_matches.json").write_text("[]", encoding="utf-8")
+    (run / "cat_match_review.json").write_text("[]", encoding="utf-8")
 
     status = main([flag, "2026-09-02", "NLF", "--outputs-dir", str(outputs)])
 
     assert status == 0
-    assert str(run / "cat_mapping.json") in capsys.readouterr().out
+    assert str(run / "cat_matches.json") in capsys.readouterr().out

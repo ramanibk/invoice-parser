@@ -27,7 +27,7 @@ output parent. The pipeline validates all sources before publication, then runs 
 4. Query the read-only Airtable Needs Invoice scope and atomically publish the paired
    `extraction.json` and normalized `needs_invoice.json` snapshots.
 5. Run `codex exec` in an ephemeral read-only sandbox, validate its structured identity matches,
-   and publish `cat_mapping.json` with `cat_match_review.json`.
+   and publish `cat_matches.json` with `cat_match_review.json`.
 
 Codex uses names, owners, addresses, microchips, and vouchers as strong identity evidence. Gender,
 color, age, appointment context, services, and cost are supporting evidence only. Codex never writes
@@ -238,7 +238,7 @@ uv run generate-cat-mapping-prompt --first-pass 2026-09-02 NLF
 
 The command validates the two snapshots and selects the newest numbered run directory containing
 both `extraction.json` and `needs_invoice.json`. Paste its short output into Codex to create
-`cat_mapping.json` and `cat_match_review.json`. The AI instructions and their shared invariants live
+`cat_matches.json` and `cat_match_review.json`. The AI instructions and their shared invariants live
 under `src/prompts/`.
 
 After filling the empty `resolution` fields in the review file, generate and paste the separate
@@ -249,7 +249,7 @@ uv run generate-cat-mapping-prompt --resolve 2026-09-02 NLF
 ```
 
 Exactly one of `--first-pass` and `--resolve` is required. Resolution mode also validates that the
-mapping and review artifacts already exist as JSON objects.
+accepted-match and review artifacts already exist as JSON arrays.
 
 Use `--outputs-dir PATH` when the paired artifacts are outside the default sibling
 `../bac-outputs/` directory. The generator reads and validates files but does not create or modify any

@@ -5,7 +5,7 @@ instructions conflict with an invariant, the invariant controls.
 
 ## Purpose
 
-Create a complete, deterministic map from every extraction cat ID to its matching Airtable cat,
+Create a complete, deterministic map from every paperwork cat ID to its matching Airtable cat,
 plus a review artifact identifying every cat on either side that could not be confidently matched.
 Use only the supplied `extraction.json` and `needs_invoice.json`. This task is read-only: do not
 change Airtable, either input file, or any source PDF.
@@ -16,7 +16,7 @@ change Airtable, either input file, or any source PDF.
 
 Read `extraction.json`. For each item in `cats`, use:
 
-- `cat_id` as the output object's top-level key;
+- `cat_id` as the output entry's `paperwork_cat_id`;
 - `cat_name` as the manifest-verified source name;
 - `display_name` as the complete name printed on the treatment sheet;
 - `owner_name`; and
@@ -29,7 +29,7 @@ Do not treat the extraction `display_name` as an Airtable display name.
 
 Read `needs_invoice.json`. For each item in `cats`, use:
 
-- `airtable_cat_id` as the Airtable identity written to `airtable_id`;
+- `airtable_cat_id` as the Airtable identity written to `airtable_cat_id`;
 - `cat_name` as the value written to `airtable_display_name`; and
 - all available identity evidence, including owner/trapper, address or location, microchip,
   voucher number, appointment date and type, gender, color, age, ear-tip status, services, and
@@ -87,34 +87,40 @@ not as agreement or contradiction. Never invent a value.
 
 ## Output contract
 
-Produce valid JSON containing exactly one top-level entry for every confidently matched extraction
-cat and no entry for an unresolved extraction cat. Use the extraction `cat_id` as the top-level key
-and use this exact shape and these exact field names:
+For automatic matching, return exactly one object with a `matches` array and a `review_items`
+array. The pipeline publishes those arrays as `cat_matches.json` and `cat_match_review.json`.
+
+Produce a valid JSON array containing exactly one entry for every confidently matched extraction
+cat and no entry for an unresolved extraction cat. Use the extraction `cat_id` as
+`paperwork_cat_id` and use this exact shape and these exact field names:
 
 ```json
-{
-  "26SEP02-NLF-1": {
-    "extraction_cat_display_name": "(F) Example Cat Owner",
-    "airtable_id": "recExample123",
+[
+  {
+    "paperwork_cat_id": "26SEP02-NLF-1",
+    "paperwork_display_name": "(F) Example Cat Owner",
+    "airtable_cat_id": "recExample123",
     "airtable_display_name": "Example Cat",
     "match_reason": "Exact cat-name match; owner and appointment context are consistent, with no conflicting identifier."
   }
-}
+]
 ```
 
-Do not put an unresolved extraction cat in `cat_mapping.json`. Put it in `cat_match_review.json`
+Do not put an unresolved extraction cat in `cat_matches.json`. Put it in `cat_match_review.json`
 instead:
 
 ```json
-{
-  "26SEP02-NLF-2": {
-    "extraction_cat_display_name": "(F) Source Cat Owner",
-    "airtable_id": null,
+[
+  {
+    "review_kind": "unresolved_paperwork",
+    "paperwork_cat_id": "26SEP02-NLF-2",
+    "paperwork_display_name": "(F) Source Cat Owner",
+    "airtable_cat_id": null,
     "airtable_display_name": null,
     "match_reason": "Unresolved: two Airtable cats remain plausible and no strong evidence distinguishes them.",
     "resolution": ""
   }
-}
+]
 ```
 
 The `match_reason` must be concise but specific. Name the decisive evidence, the matching rule
@@ -122,41 +128,43 @@ The `match_reason` must be concise but specific. Name the decisive evidence, the
 entries, name the missing or conflicting evidence. Do not include hidden reasoning, a numeric
 score, or unsupported certainty.
 
-Before writing `cat_mapping.json`, verify all of the following:
+Before writing `cat_matches.json`, verify all of the following:
 
-- every top-level key is an extraction `cat_id` from `extraction.json`;
+- every `paperwork_cat_id` is an extraction `cat_id` from `extraction.json`;
 - every confidently matched extraction `cat_id` appears exactly once;
 - no unresolved extraction `cat_id` appears;
-- every `extraction_cat_display_name` exactly equals that extraction record's `display_name`;
-- every `airtable_id` and `airtable_display_name` is non-null;
-- every `airtable_id` exists in `needs_invoice.json`;
-- no `airtable_id` is assigned more than once;
+- every `paperwork_display_name` exactly equals that extraction record's `display_name`;
+- every `airtable_cat_id` and `airtable_display_name` is non-null;
+- every `airtable_cat_id` exists in `needs_invoice.json`;
+- no `airtable_cat_id` is assigned more than once;
 - every `airtable_display_name` exactly equals the matched Airtable record's `cat_name`;
 - each matched pair has no unresolved material contradiction; and
-- the output has no fields beyond `extraction_cat_display_name`, `airtable_id`,
+- the output has no fields beyond `paperwork_cat_id`, `paperwork_display_name`, `airtable_cat_id`,
   `airtable_display_name`, and `match_reason`.
 
-Also produce `cat_match_review.json` for records requiring human review. Use the same top-level
-mapping format as `cat_mapping.json`, plus an empty `resolution` string for operator instructions:
+Also produce a JSON array in `cat_match_review.json` for records requiring human review. Use the
+same identity fields as `cat_matches.json`, plus `review_kind` and an empty `resolution` string for
+operator instructions:
 
-- For an unresolved extraction cat, use its extraction `cat_id` as the top-level key, set both
-  Airtable fields to `null`, populate `extraction_cat_display_name` from `extraction.json`, and
+- For an unresolved extraction cat, use `review_kind: "unresolved_paperwork"`, copy its extraction
+  `cat_id` to `paperwork_cat_id`, set both
+  Airtable fields to `null`, populate `paperwork_display_name` from `extraction.json`, and
   state its specific unresolved `match_reason`.
-- For a match accepted only through the bounded-cohort array-order tie-breaker, use its extraction
-  `cat_id` as the top-level key and copy the complete populated entry from `cat_mapping.json`. Its
+- For a match accepted only through the bounded-cohort array-order tie-breaker, use
+  `review_kind: "bounded_cohort"` and copy the complete populated entry from `cat_matches.json`. Its
   `match_reason` must make clear that the pair needs human review because the available evidence
   did not distinguish the equally plausible assignments.
-- For an unassigned Airtable cat, use its `airtable_cat_id` as the top-level key, populate
-  `airtable_id` and `airtable_display_name` from that record, set
-  `extraction_cat_display_name` to
-  `null`, and explain in `match_reason` why it was not confidently assigned. The reason must
-  distinguish no plausible extraction cat, ambiguity among extraction cats, and conflicting
+- For an unassigned Airtable cat, use `review_kind: "unassigned_airtable"`, populate
+  `airtable_cat_id` and `airtable_display_name` from that record, set
+  `paperwork_cat_id` and `paperwork_display_name` to `null`, and explain in `match_reason` why it
+  was not confidently assigned. The reason must
+  distinguish no plausible paperwork cat, ambiguity among paperwork cats, and conflicting
   evidence when applicable.
 - If an unresolved extraction cat has one or more plausible Airtable candidates, include the
   extraction entry and include each still-unassigned candidate as its own Airtable entry. Explain
   the ambiguity from the perspective of each entry without asserting a tentative match.
 - If every extraction cat is confidently matched without an array-order tie-breaker and every
-  Airtable cat is assigned, write an empty JSON object (`{}`).
+  Airtable cat is assigned, write an empty JSON array (`[]`).
 - Set `resolution` to an empty string in every entry. Do not propose choices or fill this field;
   it is reserved for the operator's instructions to the
   [`cat_match_resolution_instructions.md`](cat_match_resolution_instructions.md) workflow.
@@ -164,49 +172,52 @@ mapping format as `cat_mapping.json`, plus an empty `resolution` string for oper
 Example review artifact:
 
 ```json
-{
-  "26SEP02-NLF-2": {
-    "extraction_cat_display_name": "(F) Source Cat Owner",
-    "airtable_id": null,
+[
+  {
+    "review_kind": "unresolved_paperwork",
+    "paperwork_cat_id": "26SEP02-NLF-2",
+    "paperwork_display_name": "(F) Source Cat Owner",
+    "airtable_cat_id": null,
     "airtable_display_name": null,
     "match_reason": "Unresolved: two Airtable cats remain plausible and no strong evidence distinguishes them.",
     "resolution": ""
   },
-  "recExample456": {
-    "extraction_cat_display_name": null,
-    "airtable_id": "recExample456",
+  {
+    "review_kind": "unassigned_airtable",
+    "paperwork_cat_id": null,
+    "paperwork_display_name": null,
+    "airtable_cat_id": "recExample456",
     "airtable_display_name": "Possible Cat",
-    "match_reason": "Unassigned Airtable cat: it remains one of two plausible candidates for extraction cat 26SEP02-NLF-2.",
+    "match_reason": "Unassigned Airtable cat: it remains one of two plausible candidates for paperwork cat 26SEP02-NLF-2.",
     "resolution": ""
   }
-}
+]
 ```
 
 Before writing either artifact, verify the complete in-memory result. In addition to the
-`cat_mapping.json` checks above, verify that:
+`cat_matches.json` checks above, verify that:
 
 - `cat_match_review.json` contains every and only unresolved extraction cats, extraction matches
   accepted through the bounded-cohort array-order tie-breaker, and unassigned Airtable cats;
-- the four mapping fields in every extraction-keyed bounded-cohort tie-breaker review entry exactly
-  match its entry in `cat_mapping.json`;
-- every unresolved extraction-keyed review entry is absent from `cat_mapping.json` and has null
-  `airtable_id` and `airtable_display_name`;
-- every extraction-keyed `extraction_cat_display_name` exactly equals that extraction record's
-  `display_name`, and every Airtable-keyed `extraction_cat_display_name` is `null`;
-- every Airtable-keyed entry's key and `airtable_id` are identical and exist in
-  `needs_invoice.json`;
-- every Airtable-keyed `airtable_display_name` exactly equals that record's `cat_name`; and
-- `cat_mapping.json` contains only `extraction_cat_display_name`, `airtable_id`,
+- the five match fields in every paperwork-referenced bounded-cohort tie-breaker review entry
+  exactly match its entry in `cat_matches.json`;
+- every unresolved paperwork-referenced review entry is absent from `cat_matches.json` and has null
+  `airtable_cat_id` and `airtable_display_name`;
+- every paperwork-referenced `paperwork_display_name` exactly equals that extraction record's
+  `display_name`, and every Airtable-referenced `paperwork_display_name` is `null`;
+- every Airtable-referenced entry's `airtable_cat_id` exists in `needs_invoice.json`;
+- every Airtable-referenced `airtable_display_name` exactly equals that record's `cat_name`; and
+- `cat_matches.json` contains only `paperwork_cat_id`, `paperwork_display_name`, `airtable_cat_id`,
   `airtable_display_name`, and `match_reason`, while every non-empty review entry contains exactly
-  those fields plus `resolution: ""`.
+  those fields plus `review_kind` and `resolution: ""`.
 
 Finally, verify completeness across both artifacts: every extraction cat is either present as a
-matched entry in `cat_mapping.json` or present as an unresolved entry in `cat_match_review.json`.
+matched entry in `cat_matches.json` or present as an unresolved entry in `cat_match_review.json`.
 A bounded-cohort tie-breaker match may intentionally appear in both. Every Airtable cat is either
-assigned once in `cat_mapping.json` or represented as an unassigned Airtable entry in
+assigned once in `cat_matches.json` or represented as an unassigned Airtable entry in
 `cat_match_review.json`.
 
-Save `cat_mapping.json` and `cat_match_review.json` together under the sibling
+Save `cat_matches.json` and `cat_match_review.json` together under the sibling
 `../bac-outputs/` directory, in the applicable run directory or another output path explicitly
 supplied by the operator. Do not write either file unless both artifacts pass validation. Never
 overwrite an existing artifact unless the operator explicitly requests it.

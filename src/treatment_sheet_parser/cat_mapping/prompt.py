@@ -26,7 +26,7 @@ class CatMappingPaths:
     invariants: Path
     matching_instructions: Path
     resolution_instructions: Path
-    mapping: Path
+    matches: Path
     review: Path
 
 
@@ -122,7 +122,7 @@ def _mapping_paths(run_directory: Path) -> CatMappingPaths:
         invariants=(PROMPTS_ROOT / "invariants.md").resolve(),
         matching_instructions=(PROMPTS_ROOT / "cat_matching_instructions.md").resolve(),
         resolution_instructions=(PROMPTS_ROOT / "cat_match_resolution_instructions.md").resolve(),
-        mapping=run / "cat_mapping.json",
+        matches=run / "cat_matches.json",
         review=run / "cat_match_review.json",
     )
 
@@ -135,6 +135,17 @@ def _load_object(path: Path) -> dict[str, Any]:
         raise CatMappingPromptError(f"could not read valid JSON object from {path}: {exc}") from exc
     if not isinstance(document, dict):
         raise CatMappingPromptError(f"JSON artifact must contain an object: {path}")
+    return document
+
+
+def _load_array(path: Path) -> list[Any]:
+    """Load one required JSON array without modifying the artifact."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CatMappingPromptError(f"could not read valid JSON array from {path}: {exc}") from exc
+    if not isinstance(document, list):
+        raise CatMappingPromptError(f"JSON artifact must contain an array: {path}")
     return document
 
 
@@ -161,9 +172,9 @@ def _validate_needs_invoice(document: dict[str, Any], appointment_date: str, cod
 
 
 def _validate_resolution_artifacts(paths: CatMappingPaths) -> None:
-    """Require valid mapping and review objects before generating a resolution prompt."""
-    for path in (paths.mapping, paths.review):
-        _load_object(path)
+    """Require valid match and review arrays before generating a resolution prompt."""
+    for path in (paths.matches, paths.review):
+        _load_array(path)
 
 
 def _first_pass_prompt(appointment_date: str, code: str, paths: CatMappingPaths) -> str:
@@ -174,7 +185,7 @@ Read and follow: {paths.invariants}
 Follow: {paths.matching_instructions}
 Extraction: {paths.extraction}
 Needs Invoice: {paths.needs_invoice}
-Write mapping: {paths.mapping}
+Write accepted matches: {paths.matches}
 Write review: {paths.review}
 
 Follow the instructions exactly, validate both outputs before writing, and do not modify the input
@@ -190,11 +201,11 @@ Read and follow: {paths.invariants}
 Follow: {paths.resolution_instructions}
 Extraction: {paths.extraction}
 Needs Invoice: {paths.needs_invoice}
-Mapping: {paths.mapping}
+Accepted matches: {paths.matches}
 Review with my resolutions: {paths.review}
 
 Apply the non-empty `resolution` fields exactly, validate the complete result before updating the
-mapping, and leave the review file unchanged.
+accepted matches, and leave the review file unchanged.
 """
 
 
